@@ -17,7 +17,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           throw new Error('Invalid pathname')
         }
         return {
-          allowedContentTypes: ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav', 'audio/*'],
+          allowedContentTypes: ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav', 'audio/*', 'video/webm'],
           maximumSizeInBytes: 500 * 1024 * 1024,
         }
       },
