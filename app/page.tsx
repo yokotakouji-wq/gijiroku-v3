@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Phase =
@@ -61,15 +61,48 @@ export default function App() {
   const [errMsg, setErrMsg]     = useState('')
   const [blobUrl, setBlobUrl]   = useState('')
   const [inferredAtt, setInferredAtt] = useState('')
+  const [isPaused, setIsPaused] = useState(false)
 
-  const mrRef      = useRef<MediaRecorder | null>(null)
-  const chunksRef  = useRef<Blob[]>([])
-  const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null)
-  const startWall  = useRef(0)
+  const mrRef        = useRef<MediaRecorder | null>(null)
+  const chunksRef    = useRef<Blob[]>([])
+  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null)
+  const startWall    = useRef(0)
+  const pausedMsRef  = useRef(0)
+  const pauseStartRef = useRef(0)
 
   // Field setter
   const setField = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setInfo(p => ({ ...p, [k]: e.target.value }))
+
+  // 録音開始時に一時停止状態をリセット
+  useEffect(() => {
+    if (phase === 'recording') {
+      setIsPaused(false)
+      pausedMsRef.current = 0
+    }
+  }, [phase])
+
+  // ── Pause / Resume ─────────────────────────────────────────────────────
+  function pauseRecording() {
+    if (mrRef.current?.state === 'recording') {
+      mrRef.current.pause()
+      if (timerRef.current) clearInterval(timerRef.current)
+      pauseStartRef.current = Date.now()
+      setIsPaused(true)
+    }
+  }
+
+  function resumeRecording() {
+    if (mrRef.current?.state === 'paused') {
+      mrRef.current.resume()
+      pausedMsRef.current += Date.now() - pauseStartRef.current
+      const elapsed = pausedMsRef.current
+      timerRef.current = setInterval(
+        () => setRecSec(Math.floor((Date.now() - startWall.current - elapsed) / 1000)), 500
+      )
+      setIsPaused(false)
+    }
+  }
 
   // ── Recording ──────────────────────────────────────────────────────────
   async function startRec() {
@@ -304,6 +337,23 @@ export default function App() {
 
       <main style={{ maxWidth:640, margin:'0 auto', padding:'14px 12px 80px' }}>
 
+        {/* ── 注意書きカード ── */}
+        <div style={{
+          background: '#fffbeb',
+          border: '1px solid #fde68a',
+          borderRadius: 10,
+          padding: '14px 18px',
+          marginBottom: 16,
+          fontSize: 13,
+          color: '#92400e',
+          lineHeight: 1.8,
+        }}>
+          <strong style={{ display: 'block', marginBottom: 4, color: '#78350f' }}>
+            ⚠️ AIによる生成物は必ず確認をお願いします。
+          </strong>
+          固有名詞・数値・決定事項はAIが聞き間違える場合があります。出力後に担当者が内容を確認・修正してから提出してください。録音データおよび議事録は施設内での業務利用に限ります。
+        </div>
+
         {/* ── Recording Card ── */}
         <Card>
           {phase === 'idle' && (
@@ -320,16 +370,29 @@ export default function App() {
 
           {phase === 'recording' && (
             <div style={{ display:'flex', flexDirection:'column', alignItems:'center', padding:'36px 20px 28px', gap:14 }}>
-              <button onClick={stopRec} style={micBtnStyle(true)}>
-                <svg width="20" height="20" viewBox="0 0 24 24">
-                  <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/>
-                </svg>
-                <span>停止</span>
-              </button>
-              <div style={{ fontSize:28, fontWeight:600, color:'#dc2626', letterSpacing:'0.08em', fontVariantNumeric:'tabular-nums' }}>
+              <div style={{ display:'flex', alignItems:'center', gap:16 }}>
+                <button onClick={stopRec} style={micBtnStyle(true)}>
+                  <svg width="20" height="20" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/>
+                  </svg>
+                  <span>停止</span>
+                </button>
+                {isPaused ? (
+                  <button onClick={resumeRecording} style={pauseBtnStyle('resume')}>
+                    ▶ 再開
+                  </button>
+                ) : (
+                  <button onClick={pauseRecording} style={pauseBtnStyle('pause')}>
+                    ⏸ 一時停止
+                  </button>
+                )}
+              </div>
+              <div style={{ fontSize:28, fontWeight:600, color: isPaused ? '#d97706' : '#dc2626', letterSpacing:'0.08em', fontVariantNumeric:'tabular-nums' }}>
                 {fmtSec(recSec)}
               </div>
-              <p style={{ fontSize:11, color:'#dc2626' }}>録音中 — 停止後に自動で文字起こしが始まります</p>
+              <p style={{ fontSize:11, color: isPaused ? '#d97706' : '#dc2626' }}>
+                {isPaused ? '一時停止中 — 再開または停止してください' : '録音中 — 停止後に自動で文字起こしが始まります'}
+              </p>
             </div>
           )}
 
@@ -677,3 +740,11 @@ const errBoxStyle: React.CSSProperties = {
   background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: 8,
   padding: '10px 14px', fontSize: 12, color: '#dc2626', marginBottom: 10,
 }
+
+const pauseBtnStyle = (mode: 'pause' | 'resume'): React.CSSProperties => ({
+  padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
+  fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+  border: `0.5px solid ${mode === 'pause' ? '#fde68a' : '#bbf7d0'}`,
+  background: mode === 'pause' ? '#fffbeb' : '#f0fdf4',
+  color: mode === 'pause' ? '#d97706' : '#16a34a',
+})
