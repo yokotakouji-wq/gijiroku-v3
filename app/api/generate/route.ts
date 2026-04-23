@@ -46,7 +46,9 @@ export async function POST(req: NextRequest) {
       .map(b => (b as any).text)
       .join('')
 
-    const data = JSON.parse(text.replace(/```json|```/g, '').trim())
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) throw new Error('レスポンスにJSONが含まれていません')
+    const data = JSON.parse(jsonMatch[0])
     return NextResponse.json(data)
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
