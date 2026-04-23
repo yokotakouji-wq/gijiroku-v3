@@ -63,6 +63,7 @@ export default function App() {
   const [blobUrl, setBlobUrl]   = useState('')
   const [inferredAtt, setInferredAtt] = useState('')
   const [isPaused, setIsPaused] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   const mrRef        = useRef<MediaRecorder | null>(null)
   const chunksRef    = useRef<Blob[]>([])
@@ -70,6 +71,7 @@ export default function App() {
   const startWall    = useRef(0)
   const pausedMsRef  = useRef(0)
   const pauseStartRef = useRef(0)
+  const lastBlobRef  = useRef<{ blob: Blob; mimeType: string } | null>(null)
 
   // Field setter
   const setField = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -140,20 +142,78 @@ export default function App() {
   // ── Pipeline ───────────────────────────────────────────────────────────
   async function runPipeline(mimeType: string) {
     const audioBlob = new Blob(chunksRef.current, { type: mimeType })
+    lastBlobRef.current = { blob: audioBlob, mimeType }
+
+    const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
+    const filename = `audio/meeting-${Date.now()}.${ext}`
+
+    // 1. Upload (Vercel Blob) ─ ブラウザから直接アップロード（サイズ制限なし）
+    let url: string
     try {
-      // 1. Upload (Vercel Blob) ─ ブラウザから直接アップロード（サイズ制限なし）
       setPhase('uploading')
-      setProcStep('音声データを安全に保存中…')
-      const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
-      const filename = `meeting-${Date.now()}.${ext}`
+      setUploadProgress(0)
+      setProcStep('音声データをアップロード中… 画面を閉じないでください')
       const result = await upload(filename, audioBlob, {
         access: 'public',
         handleUploadUrl: '/api/upload-audio',
+        multipart: true,
+        clientPayload: process.env.NEXT_PUBLIC_APP_UPLOAD_PASSWORD ?? '',
+        onUploadProgress: ({ percentage }) => {
+          setUploadProgress(percentage)
+        },
       })
-      const url = result.url
+      url = result.url
       setBlobUrl(url)
+    } catch (e: any) {
+      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
+      setPhase('error')
+      return
+    }
 
-      // 2. Transcribe (Deepgram)
+    await runFromTranscribe(url)
+  }
+
+  async function retryUpload() {
+    const saved = lastBlobRef.current
+    if (!saved) return
+    setErrMsg('')
+    const { blob, mimeType } = saved
+    const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
+    const filename = `audio/meeting-${Date.now()}.${ext}`
+    let url: string
+    try {
+      setPhase('uploading')
+      setUploadProgress(0)
+      setProcStep('音声データをアップロード中… 画面を閉じないでください')
+      const result = await upload(filename, blob, {
+        access: 'public',
+        handleUploadUrl: '/api/upload-audio',
+        multipart: true,
+        clientPayload: process.env.NEXT_PUBLIC_APP_UPLOAD_PASSWORD ?? '',
+        onUploadProgress: ({ percentage }) => {
+          setUploadProgress(percentage)
+        },
+      })
+      url = result.url
+      setBlobUrl(url)
+    } catch (e: any) {
+      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
+      setPhase('error')
+      return
+    }
+    await runFromTranscribe(url)
+  }
+
+  async function retryFromTranscribe() {
+    if (!blobUrl) return
+    setErrMsg('')
+    await runFromTranscribe(blobUrl)
+  }
+
+  async function runFromTranscribe(url: string) {
+    // 2. Transcribe (Deepgram)
+    let transcript: string
+    try {
       setPhase('transcribing')
       setProcStep('文字起こし中… (Deepgram Nova-3)')
       const txRes = await fetch('/api/transcribe', {
@@ -162,9 +222,15 @@ export default function App() {
         body: JSON.stringify({ url }),
       })
       if (!txRes.ok) throw new Error((await txRes.json()).error || '文字起こしに失敗しました')
-      const { transcript } = await txRes.json()
+      ;({ transcript } = await txRes.json())
+    } catch (e: any) {
+      setErrMsg(`文字起こしに失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
+      setPhase('error')
+      return
+    }
 
-      // 3. Generate (Claude Haiku)
+    // 3. Generate (Claude Haiku)
+    try {
       setPhase('generating')
       setProcStep('議事録を作成中… (Claude Haiku)')
       const genRes = await fetch('/api/generate', {
@@ -181,7 +247,7 @@ export default function App() {
       setMinutes(data)
       setPhase('preview')
     } catch (e: any) {
-      setErrMsg(e.message)
+      setErrMsg(`議事録生成に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
       setPhase('error')
     }
   }
@@ -303,7 +369,7 @@ export default function App() {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
-  const isProc = (['uploading', 'transcribing', 'generating'] as Phase[]).includes(phase)
+  const isProc = (['transcribing', 'generating'] as Phase[]).includes(phase)
   const displayMin = isEditing ? editBuf : minutes
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -397,6 +463,19 @@ export default function App() {
             </div>
           )}
 
+          {phase === 'uploading' && (
+            <div style={{ padding:'40px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:18 }}>
+              <div style={{ width:38, height:38, borderRadius:'50%', border:'2.5px solid #e5e7eb', borderTopColor:'#1a56db', animation:'spin .7s linear infinite' }}/>
+              <div style={{ textAlign:'center', width:'100%', maxWidth:280 }}>
+                <div style={{ fontSize:13, fontWeight:500, marginBottom:10 }}>{procStep}</div>
+                <div style={{ background:'#e5e7eb', borderRadius:4, height:6, width:'100%', overflow:'hidden', marginBottom:6 }}>
+                  <div style={{ height:'100%', background:'#1a56db', borderRadius:4, width:`${uploadProgress}%`, transition:'width .3s' }}/>
+                </div>
+                <div style={{ fontSize:11, color:'#6b7280' }}>{uploadProgress}%</div>
+              </div>
+            </div>
+          )}
+
           {isProc && (
             <div style={{ padding:'40px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:18 }}>
               <div style={{ width:38, height:38, borderRadius:'50%', border:'2.5px solid #e5e7eb', borderTopColor:'#1a56db', animation:'spin .7s linear infinite' }}/>
@@ -428,8 +507,14 @@ export default function App() {
                   <a href={blobUrl} target="_blank" style={{ color:'#1a56db', marginLeft:4 }}>ダウンロード</a>
                 </p>
               )}
-              <div style={{ display:'flex', gap:8 }}>
-                <Btn onClick={() => { setPhase('idle'); setErrMsg(''); setBlobUrl('') }}>最初から</Btn>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                <Btn onClick={() => { setPhase('idle'); setErrMsg(''); setBlobUrl(''); lastBlobRef.current = null }}>最初から</Btn>
+                {lastBlobRef.current && !blobUrl && (
+                  <Btn accent onClick={retryUpload}>再試行（アップロード）</Btn>
+                )}
+                {blobUrl && (
+                  <Btn accent onClick={retryFromTranscribe}>文字起こしから再試行</Btn>
+                )}
               </div>
             </div>
           )}
