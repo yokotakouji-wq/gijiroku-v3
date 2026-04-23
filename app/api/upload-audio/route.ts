@@ -1,21 +1,29 @@
-import { put } from '@vercel/blob'
-import { NextRequest, NextResponse } from 'next/server'
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/client'
+import { NextResponse } from 'next/server'
 
-export const runtime = 'edge'
+export async function POST(request: Request): Promise<NextResponse> {
+  const body = (await request.json()) as HandleUploadBody
 
-export async function POST(req: NextRequest) {
   try {
-    const contentType = req.headers.get('content-type') || 'audio/webm'
-    const ext = contentType.includes('mp4') ? 'm4a' : 'webm'
-    const filename = `meeting-${Date.now()}.${ext}`
-
-    const result = await put(filename, req.body!, {
-      access: 'public',
-      contentType,
+    const jsonResponse = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async () => {
+        return {
+          allowedContentTypes: ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav', 'audio/*'],
+          maximumSizeInBytes: 500 * 1024 * 1024,
+        }
+      },
+      onUploadCompleted: async ({ blob }) => {
+        console.log('Upload completed:', blob.url)
+      },
     })
 
-    return NextResponse.json({ url: result.url })
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 })
+    return NextResponse.json(jsonResponse)
+  } catch (error) {
+    return NextResponse.json(
+      { error: (error as Error).message },
+      { status: 400 }
+    )
   }
 }

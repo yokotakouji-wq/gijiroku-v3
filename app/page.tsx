@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { upload } from '@vercel/blob/client'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Phase =
@@ -140,16 +141,16 @@ export default function App() {
   async function runPipeline(mimeType: string) {
     const audioBlob = new Blob(chunksRef.current, { type: mimeType })
     try {
-      // 1. Upload (Vercel Blob) ─ 録音データを最優先で保存
+      // 1. Upload (Vercel Blob) ─ ブラウザから直接アップロード（サイズ制限なし）
       setPhase('uploading')
       setProcStep('音声データを安全に保存中…')
-      const upRes = await fetch('/api/upload-audio', {
-        method: 'POST',
-        headers: { 'Content-Type': mimeType },
-        body: audioBlob,
+      const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
+      const filename = `meeting-${Date.now()}.${ext}`
+      const result = await upload(filename, audioBlob, {
+        access: 'public',
+        handleUploadUrl: '/api/upload-audio',
       })
-      if (!upRes.ok) throw new Error('音声の保存に失敗しました')
-      const { url } = await upRes.json()
+      const url = result.url
       setBlobUrl(url)
 
       // 2. Transcribe (Deepgram)
