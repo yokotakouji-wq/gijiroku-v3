@@ -344,16 +344,19 @@ export default function App() {
       spacing: { after: 360 },
     }))
 
-    // ── Info table（空欄の項目は省略、作成日・版区分は常に表示）──
+    // ── Info table ──
+    // 常に表示（空欄でも行を残す）: 開催日時・書記・出席者・作成日・版区分
+    // 未入力なら行ごと削除: 開催場所・司会
+    // 会議名はタイトルに入れるため非表示
     const dateStr = info.dateStart
       ? fmtDT(info.dateStart) + (info.dateEnd ? ' 〜 ' + fmtT(info.dateEnd) : '')
       : ''
     const metaRows: [string, string][] = []
-    if (dateStr)    metaRows.push(['開催日時', dateStr])
+    metaRows.push(['開催日時', dateStr])
     if (info.place) metaRows.push(['開催場所', info.place])
     if (info.facil) metaRows.push(['司会',     info.facil])
-    if (info.sec)   metaRows.push(['書記',     info.sec])
-    if (info.att)   metaRows.push(['出席者',   info.att])
+    metaRows.push(['書記',   info.sec || ''])
+    metaRows.push(['出席者', info.att || ''])
     metaRows.push(['作成日', today])
     metaRows.push(['版区分', tabLabel])
 
