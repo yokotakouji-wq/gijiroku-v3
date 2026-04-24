@@ -19,6 +19,15 @@ const OUTPUT_SCHEMA = `以下のJSON形式のみで返答してください（Ma
   "inferred_attendees": "推測される出席者名カンマ区切り（不明は空）"
 }`
 
+const ADDITIONAL_INSTRUCTION_RULES = `
+【追加指示について】
+ユーザーから追加指示がある場合は、その指示を優先して表現・詳細度・構成を調整すること。
+ただし、以下の基本ルールは追加指示より常に優先する：
+- 会話に出ていない内容を補完しない
+- 担当者・期限を勝手に作らない
+- 決定事項と未決事項を混同しない
+- 既存のJSON構造を壊さない`
+
 const DETAILED_SYSTEM = `あなたの役割は、会議内容を短く要約することではなく、実務で後から確認できる議事録を作成することです。
 
 【最重要方針】
@@ -49,6 +58,7 @@ const DETAILED_SYSTEM = `あなたの役割は、会議内容を短く要約す�
 - 決定事項と検討事項を混同すること
 - 担当者や期限を勝手に作ること
 - 内容を美化・補完すること
+${ADDITIONAL_INSTRUCTION_RULES}
 
 ${OUTPUT_SCHEMA}`
 
@@ -61,6 +71,7 @@ const SUMMARY_SYSTEM = `あなたは会議議事録の要約を作成するア�
 - 決定事項・担当者・期限・次のアクションは省略しない
 - 情報が不明な場合は推測しない
 - 重要な懸念点・リスクは残す
+${ADDITIONAL_INSTRUCTION_RULES}
 
 ${OUTPUT_SCHEMA}`
 
@@ -72,7 +83,7 @@ function parseMinutes(text: string, label: string): any {
 
 export async function POST(req: NextRequest) {
   try {
-    const { structured, meetingInfo } = await req.json()
+    const { structured, meetingInfo, transcript, additionalInstruction } = await req.json()
     if (!structured) return NextResponse.json({ error: 'structured が必要です' }, { status: 400 })
 
     const ctxLines: string[] = []
@@ -82,7 +93,13 @@ export async function POST(req: NextRequest) {
     const ctx = ctxLines.length ? ctxLines.join('\n') + '\n\n' : ''
 
     const structuredStr = JSON.stringify(structured, null, 2)
-    const userContent = `${ctx}【構造化抽出結果】\n${structuredStr}`
+    let userContent = `${ctx}【構造化抽出結果】\n${structuredStr}`
+    if (transcript) {
+      userContent += `\n\n【文字起こし全文（補助参照）】\n${transcript}`
+    }
+    if (additionalInstruction?.trim()) {
+      userContent += `\n\n【追加指示】\n${additionalInstruction.trim()}`
+    }
     const inputCharCount = userContent.length
 
     const [detailedRes, summaryRes] = await Promise.all([

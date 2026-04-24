@@ -76,6 +76,12 @@ export default function App() {
   // debug
   const [dbgTranscript, setDbgTranscript]   = useState('')
   const [dbgStructured, setDbgStructured]   = useState<any>(null)
+  // regenerate
+  const [additionalInstruction, setAdditionalInstruction] = useState('')
+  const [isRegenerating, setIsRegenerating] = useState(false)
+  const [regenErr, setRegenErr] = useState('')
+  const [prevDetailed, setPrevDetailed] = useState<Minutes | null>(null)
+  const [prevSummary, setPrevSummary]   = useState<Minutes | null>(null)
 
   const mrRef        = useRef<MediaRecorder | null>(null)
   const chunksRef    = useRef<Blob[]>([])
@@ -295,6 +301,38 @@ export default function App() {
   }
   function cancelEdit() { setEditBuf(null); setIsEditing(false) }
 
+  // ── Regenerate ─────────────────────────────────────────────────────────
+  async function regenerate() {
+    if (!dbgStructured) return
+    setPrevDetailed(detailedMinutes)
+    setPrevSummary(summaryMinutes)
+    setIsRegenerating(true)
+    setRegenErr('')
+    setIsEditing(false)
+    setEditBuf(null)
+    try {
+      const genRes = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structured: dbgStructured,
+          meetingInfo: info,
+          transcript: dbgTranscript || undefined,
+          additionalInstruction: additionalInstruction || undefined,
+        }),
+      })
+      if (!genRes.ok) throw new Error((await genRes.json()).error || '再生成に失敗しました')
+      const { detailed, summary } = await genRes.json()
+      setDetailedMinutes(detailed)
+      setSummaryMinutes(summary)
+      setActiveTab('detailed')
+    } catch (e: any) {
+      setRegenErr(e.message)
+    } finally {
+      setIsRegenerating(false)
+    }
+  }
+
   function updEdit<K extends keyof Minutes>(k: K, v: Minutes[K]) {
     setEditBuf(p => p ? { ...p, [k]: v } : null)
   }
@@ -503,6 +541,11 @@ export default function App() {
     setDbgStructured(null)
     setIsEditing(false)
     setEditBuf(null)
+    setAdditionalInstruction('')
+    setIsRegenerating(false)
+    setRegenErr('')
+    setPrevDetailed(null)
+    setPrevSummary(null)
   }
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -845,6 +888,47 @@ export default function App() {
                 <Btn onClick={() => { resetToIdle(); setBlobUrl('') }}>最初から</Btn>
                 <Btn accent onClick={downloadDocx}>Word (.docx) 出力</Btn>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Regenerate section ── */}
+        {phase === 'preview' && (
+          <div style={{ marginTop:10, background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, padding:'16px 18px' }}>
+            <label style={{ display:'block', fontSize:12, fontWeight:500, color:'#374151', marginBottom:8 }}>
+              追加指示（任意）
+            </label>
+            <textarea
+              value={additionalInstruction}
+              onChange={e => setAdditionalInstruction(e.target.value)}
+              placeholder="例：もっと詳しく／決定事項だけまとめて／カンファレンス形式に変えて"
+              rows={3}
+              style={{ ...taStyle, marginBottom:10 }}
+              disabled={isRegenerating}
+            />
+            {regenErr && (
+              <div style={{ ...errBoxStyle, marginBottom:10 }}>再生成に失敗しました: {regenErr}</div>
+            )}
+            <div style={{ display:'flex', justifyContent:'flex-end', alignItems:'center', gap:12 }}>
+              {isRegenerating && (
+                <span style={{ fontSize:11, color:'#6b7280', display:'flex', alignItems:'center', gap:6 }}>
+                  <span style={{ width:12, height:12, borderRadius:'50%', border:'1.5px solid #e5e7eb', borderTopColor:'#1a56db', display:'inline-block', animation:'spin .7s linear infinite' }}/>
+                  再生成中…
+                </span>
+              )}
+              <button
+                onClick={regenerate}
+                disabled={isRegenerating}
+                style={{
+                  padding:'9px 20px', borderRadius:8, border:'none',
+                  fontFamily:'inherit', fontSize:12, fontWeight:500,
+                  background: isRegenerating ? '#9ca3af' : '#1a56db',
+                  color:'white', cursor: isRegenerating ? 'not-allowed' : 'pointer',
+                  transition:'background .15s',
+                }}
+              >
+                再生成
+              </button>
             </div>
           </div>
         )}
