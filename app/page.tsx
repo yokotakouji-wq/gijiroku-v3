@@ -9,9 +9,12 @@ type Phase =
   | 'recording'
   | 'uploading'
   | 'transcribing'
+  | 'extracting'
   | 'generating'
   | 'preview'
   | 'error'
+
+type ActiveTab = 'detailed' | 'summary'
 
 interface Info {
   name: string; dateStart: string; dateEnd: string
@@ -40,6 +43,10 @@ const fmtT = (v: string) =>
   v ? new Date(v).toLocaleString('ja-JP', { hour:'2-digit', minute:'2-digit' }) : ''
 const fmtSec = (s: number) => `${pad(Math.floor(s/60))}:${pad(s%60)}`
 
+const isDebug =
+  process.env.NODE_ENV === 'development' &&
+  process.env.NEXT_PUBLIC_DEBUG_MINUTES === 'true'
+
 function getMimeType() {
   for (const t of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) return t
@@ -56,7 +63,9 @@ export default function App() {
   })
   const [recSec, setRecSec]   = useState(0)
   const [procStep, setProcStep] = useState('')
-  const [minutes, setMinutes]   = useState<Minutes | null>(null)
+  const [detailedMinutes, setDetailedMinutes] = useState<Minutes | null>(null)
+  const [summaryMinutes, setSummaryMinutes]   = useState<Minutes | null>(null)
+  const [activeTab, setActiveTab] = useState<ActiveTab>('detailed')
   const [isEditing, setIsEditing] = useState(false)
   const [editBuf, setEditBuf]   = useState<Minutes | null>(null)
   const [errMsg, setErrMsg]     = useState('')
@@ -64,6 +73,9 @@ export default function App() {
   const [inferredAtt, setInferredAtt] = useState('')
   const [isPaused, setIsPaused] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  // debug
+  const [dbgTranscript, setDbgTranscript]   = useState('')
+  const [dbgStructured, setDbgStructured]   = useState<any>(null)
 
   const mrRef        = useRef<MediaRecorder | null>(null)
   const chunksRef    = useRef<Blob[]>([])
@@ -73,11 +85,9 @@ export default function App() {
   const pauseStartRef = useRef(0)
   const lastBlobRef  = useRef<{ blob: Blob; mimeType: string } | null>(null)
 
-  // Field setter
   const setField = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setInfo(p => ({ ...p, [k]: e.target.value }))
 
-  // 録音開始時に一時停止状態をリセット
   useEffect(() => {
     if (phase === 'recording') {
       setIsPaused(false)
@@ -147,7 +157,6 @@ export default function App() {
     const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
     const filename = `audio/meeting-${Date.now()}.${ext}`
 
-    // 1. Upload (Vercel Blob) ─ ブラウザから直接アップロード（サイズ制限なし）
     let url: string
     try {
       setPhase('uploading')
@@ -211,7 +220,7 @@ export default function App() {
   }
 
   async function runFromTranscribe(url: string) {
-    // 2. Transcribe (Deepgram)
+    // 1. Transcribe
     let transcript: string
     try {
       setPhase('transcribing')
@@ -223,28 +232,49 @@ export default function App() {
       })
       if (!txRes.ok) throw new Error((await txRes.json()).error || '文字起こしに失敗しました')
       ;({ transcript } = await txRes.json())
+      setDbgTranscript(transcript)
     } catch (e: any) {
       setErrMsg(`文字起こしに失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
       setPhase('error')
       return
     }
 
-    // 3. Generate (Claude Haiku)
+    // 2. Extract structured data
+    let structured: any
     try {
-      setPhase('generating')
-      setProcStep('議事録を作成中… (Claude Haiku)')
-      const genRes = await fetch('/api/generate', {
+      setPhase('extracting')
+      setProcStep('内容を整理中… (構造化抽出)')
+      const exRes = await fetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript, meetingInfo: info }),
       })
+      if (!exRes.ok) throw new Error((await exRes.json()).error || '構造化抽出に失敗しました')
+      ;({ structured } = await exRes.json())
+      setDbgStructured(structured)
+    } catch (e: any) {
+      setErrMsg(`構造化抽出に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
+      setPhase('error')
+      return
+    }
+
+    // 3. Generate detailed + summary
+    try {
+      setPhase('generating')
+      setProcStep('詳細版・要約版を生成中… (Claude)')
+      const genRes = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ structured, meetingInfo: info }),
+      })
       if (!genRes.ok) throw new Error((await genRes.json()).error || '議事録生成に失敗しました')
-      const data: Minutes = await genRes.json()
+      const { detailed, summary } = await genRes.json()
 
-      // 出席者未入力 && AIが推測した場合はバナーで提案
-      if (data.inferred_attendees && !info.att) setInferredAtt(data.inferred_attendees)
+      if (detailed.inferred_attendees && !info.att) setInferredAtt(detailed.inferred_attendees)
 
-      setMinutes(data)
+      setDetailedMinutes(detailed)
+      setSummaryMinutes(summary)
+      setActiveTab('detailed')
       setPhase('preview')
     } catch (e: any) {
       setErrMsg(`議事録生成に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
@@ -254,10 +284,15 @@ export default function App() {
 
   // ── Editing ────────────────────────────────────────────────────────────
   function startEdit() {
-    setEditBuf(JSON.parse(JSON.stringify(minutes)))
+    const current = activeTab === 'detailed' ? detailedMinutes : summaryMinutes
+    setEditBuf(JSON.parse(JSON.stringify(current)))
     setIsEditing(true)
   }
-  function saveEdit() { setMinutes(editBuf); setIsEditing(false) }
+  function saveEdit() {
+    if (activeTab === 'detailed') setDetailedMinutes(editBuf)
+    else setSummaryMinutes(editBuf)
+    setIsEditing(false)
+  }
   function cancelEdit() { setEditBuf(null); setIsEditing(false) }
 
   function updEdit<K extends keyof Minutes>(k: K, v: Minutes[K]) {
@@ -276,7 +311,8 @@ export default function App() {
   // ── Word Download ──────────────────────────────────────────────────────
   async function downloadDocx() {
     const docx = (window as any).docx
-    if (!docx || !minutes) { alert('docx ライブラリが読み込まれていません'); return }
+    const m = isEditing ? editBuf : (activeTab === 'detailed' ? detailedMinutes : summaryMinutes)
+    if (!docx || !m) { alert('docx ライブラリが読み込まれていません'); return }
     const {
       Document, Paragraph, TextRun, Table, TableRow, TableCell,
       WidthType, AlignmentType, Packer,
@@ -284,13 +320,12 @@ export default function App() {
     const blue = '185FA5', gray = '4A4540', white = 'FFFFFF'
     const ch: any[] = []
 
-    // Title
+    const tabLabel = activeTab === 'detailed' ? '詳細版' : '要約版'
     ch.push(new Paragraph({
-      children: [new TextRun({ text: '議　事　録', bold: true, size: 40, color: '1A1714' })],
+      children: [new TextRun({ text: `議　事　録（${tabLabel}）`, bold: true, size: 40, color: '1A1714' })],
       alignment: AlignmentType.CENTER, spacing: { after: 400, before: 200 },
     }))
 
-    // Meta table
     const dateStr = info.dateStart
       ? fmtDT(info.dateStart) + (info.dateEnd ? ' 〜 ' + fmtT(info.dateEnd) : '')
       : '—'
@@ -320,24 +355,24 @@ export default function App() {
       spacing: { before: 200, after: 100 },
     })
 
-    if (minutes.summary) {
+    if (m.summary) {
       ch.push(sec('■ 会議の概要'))
-      ch.push(new Paragraph({ children: [new TextRun({ text: minutes.summary, size: 21, color: gray })], spacing: { after: 200 } }))
+      ch.push(new Paragraph({ children: [new TextRun({ text: m.summary, size: 21, color: gray })], spacing: { after: 200 } }))
     }
-    if (minutes.agenda_items?.length) {
+    if (m.agenda_items?.length) {
       ch.push(sec('■ 議題・議論内容'))
-      minutes.agenda_items.forEach((a, i) => {
+      m.agenda_items.forEach((a, i) => {
         ch.push(new Paragraph({ children: [new TextRun({ text: `${i+1}. ${a.title}`, bold: true, size: 22 })], spacing: { before: 140, after: 60 } }))
         ch.push(new Paragraph({ children: [new TextRun({ text: a.discussion, size: 21, color: gray })], spacing: { after: 120 }, indent: { left: 280 } }))
       })
     }
-    if (minutes.decisions?.length) {
+    if (m.decisions?.length) {
       ch.push(sec('■ 決定事項'))
-      minutes.decisions.forEach(d =>
+      m.decisions.forEach(d =>
         ch.push(new Paragraph({ children: [new TextRun({ text: '・' + d, size: 21 })], spacing: { after: 60 }, indent: { left: 200 } }))
       )
     }
-    if (minutes.todos?.length) {
+    if (m.todos?.length) {
       ch.push(sec('■ TODO・アクションアイテム'))
       ch.push(new Table({
         width: { size: 100, type: WidthType.PERCENTAGE },
@@ -346,16 +381,16 @@ export default function App() {
             children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 20, color: white })] })],
             shading: { fill: blue }, margins: { top: 80, bottom: 80, left: 100, right: 100 },
           })) }),
-          ...minutes.todos.map(t => new TableRow({ children: [t.task, t.assignee, t.deadline || '—'].map(v => new TableCell({
+          ...m.todos.map(t => new TableRow({ children: [t.task, t.assignee, t.deadline || '—'].map(v => new TableCell({
             children: [new Paragraph({ children: [new TextRun({ text: v, size: 20 })] })],
             margins: { top: 80, bottom: 80, left: 100, right: 100 },
           })) })),
         ],
       }))
     }
-    if (minutes.next_meeting) {
+    if (m.next_meeting) {
       ch.push(sec('■ 次回会議'))
-      ch.push(new Paragraph({ children: [new TextRun({ text: minutes.next_meeting, size: 21 })], spacing: { after: 160 } }))
+      ch.push(new Paragraph({ children: [new TextRun({ text: m.next_meeting, size: 21 })], spacing: { after: 160 } }))
     }
 
     const doc = new Document({ sections: [{ properties: { page: { margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } }, children: ch }] })
@@ -363,14 +398,25 @@ export default function App() {
     const objUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = objUrl
-    a.download = `議事録_${(info.name || '未設定').replace(/[/\\:*?"<>|]/g, '_')}.docx`
+    a.download = `議事録_${tabLabel}_${(info.name || '未設定').replace(/[/\\:*?"<>|]/g, '_')}.docx`
     a.click()
     URL.revokeObjectURL(objUrl)
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
-  const isProc = (['transcribing', 'generating'] as Phase[]).includes(phase)
-  const displayMin = isEditing ? editBuf : minutes
+  const isProc = (['transcribing', 'extracting', 'generating'] as Phase[]).includes(phase)
+  const currentMinutes = activeTab === 'detailed' ? detailedMinutes : summaryMinutes
+  const displayMin = isEditing ? editBuf : currentMinutes
+
+  function resetToIdle() {
+    setPhase('idle')
+    setDetailedMinutes(null)
+    setSummaryMinutes(null)
+    setDbgTranscript('')
+    setDbgStructured(null)
+    setIsEditing(false)
+    setEditBuf(null)
+  }
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -508,7 +554,7 @@ export default function App() {
                 </p>
               )}
               <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                <Btn onClick={() => { setPhase('idle'); setErrMsg(''); setBlobUrl(''); lastBlobRef.current = null }}>最初から</Btn>
+                <Btn onClick={() => { resetToIdle(); setErrMsg(''); setBlobUrl(''); lastBlobRef.current = null }}>最初から</Btn>
                 {lastBlobRef.current && !blobUrl && (
                   <Btn accent onClick={retryUpload}>再試行（アップロード）</Btn>
                 )}
@@ -540,9 +586,40 @@ export default function App() {
         {/* ── Preview Card ── */}
         {phase === 'preview' && displayMin && (
           <div style={{ background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, overflow:'hidden', marginTop:10 }}>
+
+            {/* Tabs */}
+            <div style={{ display:'flex', borderBottom:'0.5px solid #e8e8e8' }}>
+              {(['detailed', 'summary'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => { setActiveTab(tab); setIsEditing(false); setEditBuf(null) }}
+                  style={{
+                    padding: '10px 24px',
+                    fontSize: 12,
+                    fontWeight: activeTab === tab ? 600 : 400,
+                    color: activeTab === tab ? '#1a56db' : '#6b7280',
+                    background: 'none',
+                    border: 'none',
+                    borderBottom: activeTab === tab ? '2px solid #1a56db' : '2px solid transparent',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    transition: 'color .15s',
+                  }}
+                >
+                  {tab === 'detailed' ? '詳細版' : '要約版'}
+                </button>
+              ))}
+              <div style={{ flex:1, borderBottom:'2px solid transparent' }}/>
+            </div>
+
             {/* Preview header */}
             <div style={{ padding:'12px 18px', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              <span style={{ fontSize:13, fontWeight:500, color:'#374151' }}>議事録プレビュー</span>
+              <span style={{ fontSize:13, fontWeight:500, color:'#374151' }}>
+                議事録プレビュー
+                <span style={{ fontSize:11, color:'#9ca3af', marginLeft:6 }}>
+                  ({activeTab === 'detailed' ? '詳細版' : '要約版'})
+                </span>
+              </span>
               {!isEditing ? (
                 <button onClick={startEdit} style={{ fontSize:12, color:'#1a56db', background:'none', border:'none', cursor:'pointer' }}>
                   ✏️ 編集する
@@ -586,7 +663,7 @@ export default function App() {
                       ) : (
                         <>
                           <div style={{ fontSize:12, fontWeight:600, marginBottom:4 }}>{i+1}. {a.title}</div>
-                          <div style={{ fontSize:12, color:'#6b7280', lineHeight:1.75 }}>{a.discussion}</div>
+                          <div style={{ fontSize:12, color:'#6b7280', lineHeight:1.75, whiteSpace:'pre-wrap' }}>{a.discussion}</div>
                         </>
                       )}
                     </div>
@@ -678,12 +755,21 @@ export default function App() {
             <div style={{ padding:'13px 18px', borderTop:'0.5px solid #e8e8e8', background:'#f9fafb', display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
               <p style={{ fontSize:11, color:'#9ca3af' }}>Word出力後も編集・再出力できます</p>
               <div style={{ display:'flex', gap:8 }}>
-                <Btn onClick={() => { setPhase('idle'); setMinutes(null); setIsEditing(false) }}>最初から</Btn>
+                <Btn onClick={() => { resetToIdle(); setBlobUrl('') }}>最初から</Btn>
                 <Btn accent onClick={downloadDocx}>Word (.docx) 出力</Btn>
               </div>
             </div>
           </div>
         )}
+
+        {/* ── Debug sections ── */}
+        {isDebug && dbgTranscript && (
+          <DebugSection title="文字起こし全文" content={dbgTranscript} />
+        )}
+        {isDebug && dbgStructured && (
+          <DebugSection title="構造化抽出結果" content={JSON.stringify(dbgStructured, null, 2)} />
+        )}
+
       </main>
     </>
   )
@@ -699,6 +785,26 @@ function Section({ title, children }: { title: string; children: React.ReactNode
     <div style={{ marginBottom:18 }}>
       <div style={{ fontSize:11, fontWeight:600, letterSpacing:'0.07em', color:'#1a56db', marginBottom:8, paddingLeft:8, borderLeft:'2px solid #1a56db' }}>{title}</div>
       {children}
+    </div>
+  )
+}
+
+function DebugSection({ title, content }: { title: string; content: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ marginTop:10, background:'#f9fafb', border:'0.5px solid #e5e7eb', borderRadius:8, overflow:'hidden' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width:'100%', padding:'8px 12px', display:'flex', justifyContent:'space-between', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit', fontSize:11 }}
+      >
+        <span style={{ color:'#6b7280', fontWeight:500 }}>[DEBUG] {title}</span>
+        <span style={{ color:'#9ca3af' }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <pre style={{ padding:'8px 12px', fontSize:10, color:'#374151', overflow:'auto', maxHeight:300, margin:0, whiteSpace:'pre-wrap', wordBreak:'break-all', borderTop:'0.5px solid #e5e7eb' }}>
+          {content}
+        </pre>
+      )}
     </div>
   )
 }
@@ -748,7 +854,12 @@ function InfoField({ label, children }: { label: string; children: React.ReactNo
 }
 
 function ProcBar({ phase }: { phase: Phase }) {
-  const steps: [Phase, string][] = [['uploading','保存'], ['transcribing','文字起こし'], ['generating','議事録生成']]
+  const steps: [Phase, string][] = [
+    ['uploading',    '保存'],
+    ['transcribing', '文字起こし'],
+    ['extracting',   '整理'],
+    ['generating',   '議事録生成'],
+  ]
   const cur = steps.findIndex(([p]) => p === phase)
   return (
     <div style={{ display:'flex', alignItems:'center', gap:6 }}>
@@ -756,7 +867,7 @@ function ProcBar({ phase }: { phase: Phase }) {
         <div key={label} style={{ display:'flex', alignItems:'center', gap:5 }}>
           <div style={{ width:7, height:7, borderRadius:'50%', background: i < cur ? '#16a34a' : i === cur ? '#1a56db' : '#e5e7eb', transition:'background .3s' }}/>
           <span style={{ fontSize:10, color: i < cur ? '#16a34a' : i === cur ? '#1a56db' : '#9ca3af' }}>{label}</span>
-          {i < 2 && <span style={{ color:'#d1d5db', fontSize:10 }}>→</span>}
+          {i < steps.length - 1 && <span style={{ color:'#d1d5db', fontSize:10 }}>→</span>}
         </div>
       ))}
     </div>
