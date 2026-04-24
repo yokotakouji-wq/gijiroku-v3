@@ -317,69 +317,145 @@ export default function App() {
       Document, Paragraph, TextRun, Table, TableRow, TableCell,
       WidthType, AlignmentType, Packer,
     } = docx
+
     const blue = '185FA5', gray = '4A4540', white = 'FFFFFF'
+    const tabLabel = activeTab === 'detailed' ? '詳細版' : '要約版'
+    const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' })
+
+    // ── Filename ──
+    const sanitize = (s: string) =>
+      s.replace(/[/\\:*?"<>|\n\r]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 50)
+    const baseName = info.name
+      ? `${sanitize(info.name)}_議事録_${tabLabel}`
+      : `議事録_${tabLabel}`
+
     const ch: any[] = []
 
-    const tabLabel = activeTab === 'detailed' ? '詳細版' : '要約版'
+    // ── Title ──
+    const titleText = info.name ? `${info.name}　議事録` : '議事録'
     ch.push(new Paragraph({
-      children: [new TextRun({ text: `議　事　録（${tabLabel}）`, bold: true, size: 40, color: '1A1714' })],
-      alignment: AlignmentType.CENTER, spacing: { after: 400, before: 200 },
+      children: [new TextRun({ text: titleText, bold: true, size: 44, color: '1A1714' })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100, before: 200 },
+    }))
+    ch.push(new Paragraph({
+      children: [new TextRun({ text: tabLabel, size: 22, color: '9CA3AF' })],
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 360 },
     }))
 
+    // ── Info table（空欄の項目は省略、作成日・版区分は常に表示）──
     const dateStr = info.dateStart
       ? fmtDT(info.dateStart) + (info.dateEnd ? ' 〜 ' + fmtT(info.dateEnd) : '')
-      : '—'
-    const meta = [
-      ['会議名',   info.name  || '（未設定）'],
-      ['開催日時', dateStr],
-      ['開催場所', info.place || '—'],
-      ['司会',     info.facil || '—'],
-      ['書記',     info.sec   || '—'],
-      ['出席者',   info.att   || '—'],
-    ]
+      : ''
+    const metaRows: [string, string][] = []
+    if (dateStr)    metaRows.push(['開催日時', dateStr])
+    if (info.place) metaRows.push(['開催場所', info.place])
+    if (info.facil) metaRows.push(['司会',     info.facil])
+    if (info.sec)   metaRows.push(['書記',     info.sec])
+    if (info.att)   metaRows.push(['出席者',   info.att])
+    metaRows.push(['作成日', today])
+    metaRows.push(['版区分', tabLabel])
+
     ch.push(new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: meta.map(([k, v]) => new TableRow({ children: [
-        new TableCell({ width: { size: 18, type: WidthType.PERCENTAGE },
-          children: [new Paragraph({ children: [new TextRun({ text: k, bold: true, size: 21, color: blue })] })],
-          margins: { top: 80, bottom: 80, left: 100, right: 100 } }),
-        new TableCell({ width: { size: 82, type: WidthType.PERCENTAGE },
-          children: [new Paragraph({ children: [new TextRun({ text: v, size: 21 })] })],
-          margins: { top: 80, bottom: 80, left: 100, right: 100 } }),
-      ] })),
+      rows: metaRows.map(([k, v]) => new TableRow({ children: [
+        new TableCell({
+          width: { size: 20, type: WidthType.PERCENTAGE },
+          children: [new Paragraph({ children: [new TextRun({ text: k, bold: true, size: 20, color: blue })] })],
+          margins: { top: 80, bottom: 80, left: 100, right: 100 },
+        }),
+        new TableCell({
+          width: { size: 80, type: WidthType.PERCENTAGE },
+          children: [new Paragraph({ children: [new TextRun({ text: v, size: 20 })] })],
+          margins: { top: 80, bottom: 80, left: 100, right: 100 },
+        }),
+      ]})),
     }))
-    ch.push(new Paragraph({ text: '', spacing: { after: 240 } }))
+    ch.push(new Paragraph({ text: '', spacing: { after: 300 } }))
 
-    const sec = (t: string) => new Paragraph({
-      children: [new TextRun({ text: t, bold: true, size: 24, color: blue })],
-      spacing: { before: 200, after: 100 },
+    // ── ヘルパー ──
+    const secTitle = (t: string) => new Paragraph({
+      children: [new TextRun({ text: t, bold: true, size: 26, color: blue })],
+      spacing: { before: 320, after: 120 },
     })
 
-    if (m.summary) {
-      ch.push(sec('■ 会議の概要'))
-      ch.push(new Paragraph({ children: [new TextRun({ text: m.summary, size: 21, color: gray })], spacing: { after: 200 } }))
+    const spacer = () => new Paragraph({ text: '', spacing: { after: 160 } })
+
+    // 改行・箇条書き対応テキスト→Paragraph変換
+    function textToParas(
+      text: string,
+      opts: { size?: number; color?: string; leftIndent?: number } = {}
+    ): any[] {
+      const { size = 21, color = gray, leftIndent = 0 } = opts
+      const paras: any[] = []
+      for (const line of text.split('\n')) {
+        if (!line.trim()) {
+          paras.push(new Paragraph({ text: '', spacing: { after: 60 } }))
+          continue
+        }
+        // 行頭の「・」「- 」「* 」のみ箇条書き扱い
+        const bulletMatch = line.match(/^([・\-*])\s*(.+)$/)
+        if (bulletMatch) {
+          paras.push(new Paragraph({
+            children: [new TextRun({ text: '• ' + bulletMatch[2], size, color })],
+            spacing: { after: 60 },
+            indent: { left: leftIndent + 280 },
+          }))
+        } else {
+          paras.push(new Paragraph({
+            children: [new TextRun({ text: line, size, color })],
+            spacing: { after: 80 },
+            ...(leftIndent ? { indent: { left: leftIndent } } : {}),
+          }))
+        }
+      }
+      return paras.length ? paras : [new Paragraph({ text: '' })]
     }
+
+    // ── 会議の概要 ──
+    if (m.summary) {
+      ch.push(secTitle('■ 会議の概要'))
+      ch.push(...textToParas(m.summary))
+      ch.push(spacer())
+    }
+
+    // ── 議題・議論内容 ──
     if (m.agenda_items?.length) {
-      ch.push(sec('■ 議題・議論内容'))
+      ch.push(secTitle('■ 議題・議論内容'))
       m.agenda_items.forEach((a, i) => {
-        ch.push(new Paragraph({ children: [new TextRun({ text: `${i+1}. ${a.title}`, bold: true, size: 22 })], spacing: { before: 140, after: 60 } }))
-        ch.push(new Paragraph({ children: [new TextRun({ text: a.discussion, size: 21, color: gray })], spacing: { after: 120 }, indent: { left: 280 } }))
+        ch.push(new Paragraph({
+          children: [new TextRun({ text: `${i + 1}. ${a.title}`, bold: true, size: 23 })],
+          spacing: { before: 180, after: 80 },
+        }))
+        ch.push(...textToParas(a.discussion, { leftIndent: 280 }))
+        ch.push(spacer())
       })
     }
+
+    // ── 決定事項 ──
     if (m.decisions?.length) {
-      ch.push(sec('■ 決定事項'))
+      ch.push(secTitle('■ 決定事項'))
       m.decisions.forEach(d =>
-        ch.push(new Paragraph({ children: [new TextRun({ text: '・' + d, size: 21 })], spacing: { after: 60 }, indent: { left: 200 } }))
+        ch.push(new Paragraph({
+          children: [new TextRun({ text: '• ' + d, size: 21 })],
+          spacing: { after: 60 },
+          indent: { left: 200 },
+        }))
       )
+      ch.push(spacer())
     }
+
+    // ── TODO ──
     if (m.todos?.length) {
-      ch.push(sec('■ TODO・アクションアイテム'))
+      ch.push(secTitle('■ TODO・アクションアイテム'))
       ch.push(new Table({
         width: { size: 100, type: WidthType.PERCENTAGE },
         rows: [
           new TableRow({ children: ['タスク内容', '担当者', '期限'].map(h => new TableCell({
             children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 20, color: white })] })],
-            shading: { fill: blue }, margins: { top: 80, bottom: 80, left: 100, right: 100 },
+            shading: { fill: blue },
+            margins: { top: 80, bottom: 80, left: 100, right: 100 },
           })) }),
           ...m.todos.map(t => new TableRow({ children: [t.task, t.assignee, t.deadline || '—'].map(v => new TableCell({
             children: [new Paragraph({ children: [new TextRun({ text: v, size: 20 })] })],
@@ -387,18 +463,26 @@ export default function App() {
           })) })),
         ],
       }))
-    }
-    if (m.next_meeting) {
-      ch.push(sec('■ 次回会議'))
-      ch.push(new Paragraph({ children: [new TextRun({ text: m.next_meeting, size: 21 })], spacing: { after: 160 } }))
+      ch.push(spacer())
     }
 
-    const doc = new Document({ sections: [{ properties: { page: { margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } }, children: ch }] })
+    // ── 次回会議 ──
+    if (m.next_meeting) {
+      ch.push(secTitle('■ 次回会議'))
+      ch.push(...textToParas(m.next_meeting))
+    }
+
+    const doc = new Document({
+      sections: [{
+        properties: { page: { margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
+        children: ch,
+      }],
+    })
     const blob = await Packer.toBlob(doc)
     const objUrl = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = objUrl
-    a.download = `議事録_${tabLabel}_${(info.name || '未設定').replace(/[/\\:*?"<>|]/g, '_')}.docx`
+    a.download = `${baseName}.docx`
     a.click()
     URL.revokeObjectURL(objUrl)
   }
