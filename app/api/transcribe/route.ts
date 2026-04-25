@@ -1,6 +1,7 @@
 import { createClient } from '@deepgram/sdk'
 import { NextRequest, NextResponse } from 'next/server'
 
+export const runtime = 'nodejs'
 export const maxDuration = 300
 
 const estimateTokens = (text: string) => Math.ceil(text.length / 1.5)

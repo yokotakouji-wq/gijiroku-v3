@@ -54,6 +54,19 @@ function getMimeType() {
   return 'audio/mp4'
 }
 
+// バックエンド maxDuration(300s) より少し長めに設定して、サーバー側を先に失敗させる
+const FETCH_TIMEOUT_MS = 330_000
+
+async function fetchWithTimeout(url: string, opts: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal })
+  } finally {
+    clearTimeout(id)
+  }
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────
 export default function App() {
   const [phase, setPhase]     = useState<Phase>('idle')
@@ -231,7 +244,7 @@ export default function App() {
     try {
       setPhase('transcribing')
       setProcStep('文字起こし中… (Deepgram Nova-3)')
-      const txRes = await fetch('/api/transcribe', {
+      const txRes = await fetchWithTimeout('/api/transcribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
@@ -250,7 +263,7 @@ export default function App() {
     try {
       setPhase('extracting')
       setProcStep('内容を整理中… (構造化抽出)')
-      const exRes = await fetch('/api/extract', {
+      const exRes = await fetchWithTimeout('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ transcript, meetingInfo: info }),
@@ -268,7 +281,7 @@ export default function App() {
     try {
       setPhase('generating')
       setProcStep('詳細版・要約版を生成中… (Claude)')
-      const genRes = await fetch('/api/generate', {
+      const genRes = await fetchWithTimeout('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ structured, meetingInfo: info }),
@@ -311,7 +324,7 @@ export default function App() {
     setIsEditing(false)
     setEditBuf(null)
     try {
-      const genRes = await fetch('/api/generate', {
+      const genRes = await fetchWithTimeout('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
