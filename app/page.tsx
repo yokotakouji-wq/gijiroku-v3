@@ -140,6 +140,8 @@ export default function App() {
   const [editBuf, setEditBuf]   = useState<Minutes | null>(null)
   const [errMsg, setErrMsg]     = useState('')
   const [blobUrl, setBlobUrl]   = useState('')
+  const [uploadWarn, setUploadWarn]         = useState('')
+  const [isRetryingUpload, setIsRetryingUpload] = useState(false)
   const [inferredAtt, setInferredAtt] = useState('')
   const [isPaused, setIsPaused] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -497,7 +499,8 @@ export default function App() {
     const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
     const filename = `audio/meeting-${Date.now()}.${ext}`
 
-    let url: string
+    let url: string | null = null
+    setUploadWarn('')
     try {
       setPhase('uploading')
       setUploadProgress(0)
@@ -505,14 +508,48 @@ export default function App() {
       url = await uploadAudioBlob(audioBlob, filename, audioBlob.type || mimeType, setUploadProgress)
       setBlobUrl(url)
     } catch (e: any) {
-      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
-      setPhase('error')
-      return
+      // アップロード失敗は警告扱いにし、逐語録テキストから議事録生成へフォールバック
+      const msg: string = e?.message ?? ''
+      const warn = msg.includes('413')
+        ? '録音ファイルが大きいため保存できませんでした。文字起こしテキストは保持されています。'
+        : '録音ファイルの保存には失敗しましたが、文字起こしテキストは保持されています。このまま議事録生成できます。'
+      setUploadWarn(warn)
+      console.warn('[runPipeline] upload failed, falling back to live text. msg:', msg)
     }
 
-    await runFromTranscribe(url)
+    if (url) {
+      await runFromTranscribe(url)
+    } else {
+      await runFromLiveText()
+    }
   }
 
+  // 録音ファイル保存のみ再試行（パイプラインは再実行しない）
+  async function retryUploadOnly() {
+    const saved = lastBlobRef.current
+    if (!saved) return
+    setIsRetryingUpload(true)
+    const { blob, mimeType } = saved
+    const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
+    const filename = `audio/meeting-${Date.now()}.${ext}`
+    try {
+      setUploadProgress(0)
+      const url = await uploadAudioBlob(blob, filename, blob.type || mimeType, setUploadProgress)
+      setBlobUrl(url)
+      setUploadWarn('')
+    } catch (e: any) {
+      const msg: string = e?.message ?? ''
+      setUploadWarn(
+        msg.includes('413')
+          ? '録音ファイルが大きいため保存できませんでした。文字起こしテキストは保持されています。'
+          : `録音ファイルの保存に失敗しました（${msg.slice(0, 80)}）`
+      )
+    } finally {
+      setIsRetryingUpload(false)
+    }
+  }
+
+  // エラー状態からアップロードを再試行してフルパイプラインを実行
   async function retryUpload() {
     const saved = lastBlobRef.current
     if (!saved) return
@@ -528,7 +565,12 @@ export default function App() {
       url = await uploadAudioBlob(blob, filename, blob.type || mimeType, setUploadProgress)
       setBlobUrl(url)
     } catch (e: any) {
-      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
+      const msg: string = e?.message ?? ''
+      setErrMsg(
+        msg.includes('413')
+          ? '録音ファイルが大きすぎるため保存できません。「逐語録から再試行」で議事録を生成してください。'
+          : 'アップロードに失敗しました。ネットワーク接続を確認してください。（録音データは保持されています）'
+      )
       setPhase('error')
       return
     }
@@ -541,8 +583,24 @@ export default function App() {
     await runFromTranscribe(blobUrl)
   }
 
+  // 逐語録テキストから議事録生成（アップロード失敗時のフォールバック）
+  async function runFromLiveText() {
+    const transcript = liveBlocks
+      .filter(b => b.include)
+      .map(b => b.text.trim())
+      .filter(Boolean)
+      .join('\n')
+
+    if (!transcript) {
+      setErrMsg('文字起こしテキストがありません。録音を確認してください。')
+      setPhase('error')
+      return
+    }
+    setDbgTranscript(transcript)
+    await runFromExtract(transcript)
+  }
+
   async function runFromTranscribe(url: string) {
-    // 1. Transcribe
     let transcript: string
     try {
       setPhase('transcribing')
@@ -560,8 +618,11 @@ export default function App() {
       setPhase('error')
       return
     }
+    await runFromExtract(transcript)
+  }
 
-    // 2. Extract structured data
+  async function runFromExtract(transcript: string) {
+    // 1. Extract structured data
     let structured: any
     try {
       setPhase('extracting')
@@ -575,12 +636,12 @@ export default function App() {
       ;({ structured } = await exRes.json())
       setDbgStructured(structured)
     } catch (e: any) {
-      setErrMsg(`構造化抽出に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
+      setErrMsg(`構造化抽出に失敗しました: ${e.message} — 再試行してください。`)
       setPhase('error')
       return
     }
 
-    // 3. Generate detailed + summary
+    // 2. Generate detailed + summary
     try {
       setPhase('generating')
       setProcStep('詳細版・要約版を生成中… (Claude)')
@@ -599,7 +660,7 @@ export default function App() {
       setActiveTab('detailed')
       setPhase('preview')
     } catch (e: any) {
-      setErrMsg(`議事録生成に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
+      setErrMsg(`議事録生成に失敗しました: ${e.message} — 再試行してください。`)
       setPhase('error')
     }
   }
@@ -1829,7 +1890,7 @@ function uploadAudioBlob(
       } else {
         let msg = 'アップロードに失敗しました'
         try { msg = JSON.parse(xhr.responseText).error || msg } catch { /* ignore */ }
-        reject(new Error(msg))
+        reject(new Error(`HTTP ${xhr.status}: ${msg}`))
       }
     }
     xhr.onerror = () => reject(new Error('ネットワークエラー'))
