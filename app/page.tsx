@@ -74,6 +74,21 @@ const MOCK_TEXTS = [
   '次回会議は2週間後の同じ時間で調整します。議題は進捗確認と新機能のデモです。',
 ]
 
+// 話者ラベルのみの行・セグメントを除去する（Deepgramの話者分離ノイズ対策）
+function cleanRawText(raw: string): string {
+  // ライブバッファは全角スペース区切り、バッチは改行区切り
+  const sep = raw.includes('\n') ? '\n' : '　'
+  // "話者ID: 1", "話者1:", "speaker_0:" など本文なしの話者ラベルのみにマッチ
+  const speakerOnlyRe = /^(?:話者(?:ID)?[：:]\s*\d*\s*|話者\d+\s*[：:]?\s*|話者\s*[：:]?\s*\d*\s*|[Ss]peaker\s*[_-]?\d*\s*[：:]?\s*)$/
+  const filtered = raw
+    .split(sep)
+    .filter(seg => {
+      const t = seg.trim()
+      return t.length > 0 && !speakerOnlyRe.test(t)
+    })
+  return filtered.join(sep).trim()
+}
+
 const PH = '（録音から自動入力されます）'
 const pad = (n: number) => String(n).padStart(2, '0')
 const fmtLocal = (d: Date) =>
@@ -219,8 +234,10 @@ export default function App() {
 
   // ── Seal current buffer into a block ────────────────────────────────────
   const seal = useCallback(() => {
-    const t = liveBufRef.current.trim()
-    if (!t) return
+    const raw = liveBufRef.current.trim()
+    if (!raw) return
+    // 話者ラベルのみの行を除去。全て除去された場合は生テキストにフォールバック
+    const t = cleanRawText(raw) || raw
 
     // 直前ブロックのorigテキストを文脈として取得し、次回用に更新
     const contextText = prevBlockTextRef.current
@@ -1704,9 +1721,20 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
               AI整文済みです。内容を確認し、必要なら修正してください。
             </div>
           )}
+          {/* format_failed: メッセージ + 再試行ボタンをテキストエリア上部に表示 */}
           {block.status === 'format_failed' && (
-            <div style={{ fontSize: 11, color: '#d97706', marginBottom: 5 }}>
-              AI整文に失敗しました。原文を表示しています。
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+              <span style={{ fontSize: 11, color: '#d97706' }}>
+                AI整文に失敗しました。原文を表示しています。
+              </span>
+              {onRetryFormat && (
+                <button
+                  onClick={onRetryFormat}
+                  style={{ ...liveActionBtn(false, '#d97706', '#fffbeb', '#fde68a'), flexShrink: 0 }}
+                >
+                  🔄 AI整文を再試行
+                </button>
+              )}
             </div>
           )}
           <textarea
@@ -1744,15 +1772,6 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        {/* AI整文を再試行 — format_failed時のみ表示 */}
-        {block.status === 'format_failed' && onRetryFormat && (
-          <button
-            onClick={onRetryFormat}
-            style={liveActionBtn(false, '#d97706', '#fffbeb', '#fde68a')}
-          >
-            ↺ AI整文を再試行
-          </button>
-        )}
         {/* 確認OK — formatting中は無効（Gemini結果が上書きしてしまうため） */}
         <button
           disabled={block.status === 'formatting'}

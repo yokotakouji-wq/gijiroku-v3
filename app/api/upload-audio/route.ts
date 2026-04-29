@@ -4,7 +4,12 @@ import { NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 
 export async function POST(request: Request): Promise<NextResponse> {
-  console.log('[upload-audio] BLOB_READ_WRITE_TOKEN present:', Boolean(process.env.BLOB_READ_WRITE_TOKEN))
+  const tokenPresent = Boolean(process.env.BLOB_READ_WRITE_TOKEN)
+  console.log('[upload-audio] BLOB_READ_WRITE_TOKEN present:', tokenPresent)
+  if (!tokenPresent) {
+    console.error('[upload-audio] BLOB_READ_WRITE_TOKEN is not set — upload will fail')
+    return NextResponse.json({ error: 'サーバー設定エラー: BLOB_READ_WRITE_TOKEN が未設定です。Vercel環境変数を確認してください。' }, { status: 500 })
+  }
 
   try {
     const { searchParams } = new URL(request.url)
@@ -41,8 +46,16 @@ export async function POST(request: Request): Promise<NextResponse> {
     console.log('[upload-audio] upload succeeded')
     return NextResponse.json({ url: result.url })
   } catch (e: any) {
+    const msg: string = e?.message ?? ''
     console.error('[upload-audio] error name:', e?.name)
-    console.error('[upload-audio] error message:', e?.message)
-    return NextResponse.json({ error: 'アップロードに失敗しました' }, { status: 500 })
+    console.error('[upload-audio] error message:', msg)
+    console.error('[upload-audio] error status:', e?.status)
+    console.error('[upload-audio] error stack:', e?.stack?.slice(0, 600))
+
+    if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('token') || e?.status === 401) {
+      console.error('[upload-audio] likely cause: BLOB_READ_WRITE_TOKEN is invalid or lacks permissions')
+      return NextResponse.json({ error: 'Blob認証エラー (401): BLOB_READ_WRITE_TOKEN の権限または有効期限を確認してください' }, { status: 500 })
+    }
+    return NextResponse.json({ error: `アップロードに失敗しました: ${msg.slice(0, 120) || '不明なエラー'}` }, { status: 500 })
   }
 }
