@@ -74,21 +74,6 @@ const MOCK_TEXTS = [
   '次回会議は2週間後の同じ時間で調整します。議題は進捗確認と新機能のデモです。',
 ]
 
-// 話者ラベルのみの行・セグメントを除去する（Deepgramの話者分離ノイズ対策）
-function cleanRawText(raw: string): string {
-  // ライブバッファは全角スペース区切り、バッチは改行区切り
-  const sep = raw.includes('\n') ? '\n' : '　'
-  // "話者ID: 1", "話者1:", "speaker_0:" など本文なしの話者ラベルのみにマッチ
-  const speakerOnlyRe = /^(?:話者(?:ID)?[：:]\s*\d*\s*|話者\d+\s*[：:]?\s*|話者\s*[：:]?\s*\d*\s*|[Ss]peaker\s*[_-]?\d*\s*[：:]?\s*)$/
-  const filtered = raw
-    .split(sep)
-    .filter(seg => {
-      const t = seg.trim()
-      return t.length > 0 && !speakerOnlyRe.test(t)
-    })
-  return filtered.join(sep).trim()
-}
-
 const PH = '（録音から自動入力されます）'
 const pad = (n: number) => String(n).padStart(2, '0')
 const fmtLocal = (d: Date) =>
@@ -140,8 +125,6 @@ export default function App() {
   const [editBuf, setEditBuf]   = useState<Minutes | null>(null)
   const [errMsg, setErrMsg]     = useState('')
   const [blobUrl, setBlobUrl]   = useState('')
-  const [uploadWarn, setUploadWarn]         = useState('')
-  const [isRetryingUpload, setIsRetryingUpload] = useState(false)
   const [inferredAtt, setInferredAtt] = useState('')
   const [isPaused, setIsPaused] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -180,7 +163,6 @@ export default function App() {
   const pausedMsRef  = useRef(0)
   const pauseStartRef = useRef(0)
   const lastBlobRef  = useRef<{ blob: Blob; mimeType: string } | null>(null)
-  const liveBlocksRef = useRef<Block[]>([])
 
   // ── Live transcription refs ─────────────────────────────────────────────
   const wsRef          = useRef<WebSocket | null>(null)
@@ -197,7 +179,6 @@ export default function App() {
 
   liveIntervalRef.current = liveInterval
   atBottomRef.current = atBottom
-  liveBlocksRef.current = liveBlocks
 
   const setField = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setInfo(p => ({ ...p, [k]: e.target.value }))
@@ -238,10 +219,8 @@ export default function App() {
 
   // ── Seal current buffer into a block ────────────────────────────────────
   const seal = useCallback(() => {
-    const raw = liveBufRef.current.trim()
-    if (!raw) return
-    // 話者ラベルのみの行を除去。全て除去された場合は生テキストにフォールバック
-    const t = cleanRawText(raw) || raw
+    const t = liveBufRef.current.trim()
+    if (!t) return
 
     // 直前ブロックのorigテキストを文脈として取得し、次回用に更新
     const contextText = prevBlockTextRef.current
@@ -266,11 +245,7 @@ export default function App() {
     setLiveBuf('')
     setLiveInterim('')
     setLiveBufStart(endSec)
-    setLiveBlocks(prev => {
-      const next = [...prev, block]
-      liveBlocksRef.current = next
-      return next
-    })
+    setLiveBlocks(prev => [...prev, block])
     if (!atBottomRef.current) {
       setNewBlockCount(n => n + 1)
     } else {
@@ -323,7 +298,6 @@ export default function App() {
   async function startRec() {
     // Reset live state
     setLiveBlocks([])
-    liveBlocksRef.current = []
     setLiveBuf('')
     setLiveInterim('')
     setLiveBufStart(0)
@@ -506,8 +480,7 @@ export default function App() {
     const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
     const filename = `audio/meeting-${Date.now()}.${ext}`
 
-    let url: string | null = null
-    setUploadWarn('')
+    let url: string
     try {
       setPhase('uploading')
       setUploadProgress(0)
@@ -515,48 +488,14 @@ export default function App() {
       url = await uploadAudioBlob(audioBlob, filename, audioBlob.type || mimeType, setUploadProgress)
       setBlobUrl(url)
     } catch (e: any) {
-      // アップロード失敗は警告扱いにし、逐語録テキストから議事録生成へフォールバック
-      const msg: string = e?.message ?? ''
-      const warn = msg.includes('413')
-        ? '録音ファイルが大きいため保存できませんでした。文字起こしテキストは保持されています。'
-        : '録音ファイルの保存には失敗しましたが、文字起こしテキストは保持されています。このまま議事録生成できます。'
-      setUploadWarn(warn)
-      console.warn('[runPipeline] upload failed, falling back to live text. msg:', msg)
+      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
+      setPhase('error')
+      return
     }
 
-    if (url) {
-      await runFromTranscribe(url)
-    } else {
-      await runFromLiveText()
-    }
+    await runFromTranscribe(url)
   }
 
-  // 録音ファイル保存のみ再試行（パイプラインは再実行しない）
-  async function retryUploadOnly() {
-    const saved = lastBlobRef.current
-    if (!saved) return
-    setIsRetryingUpload(true)
-    const { blob, mimeType } = saved
-    const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
-    const filename = `audio/meeting-${Date.now()}.${ext}`
-    try {
-      setUploadProgress(0)
-      const url = await uploadAudioBlob(blob, filename, blob.type || mimeType, setUploadProgress)
-      setBlobUrl(url)
-      setUploadWarn('')
-    } catch (e: any) {
-      const msg: string = e?.message ?? ''
-      setUploadWarn(
-        msg.includes('413')
-          ? '録音ファイルが大きいため保存できませんでした。文字起こしテキストは保持されています。'
-          : `録音ファイルの保存に失敗しました（${msg.slice(0, 80)}）`
-      )
-    } finally {
-      setIsRetryingUpload(false)
-    }
-  }
-
-  // エラー状態からアップロードを再試行してフルパイプラインを実行
   async function retryUpload() {
     const saved = lastBlobRef.current
     if (!saved) return
@@ -572,12 +511,7 @@ export default function App() {
       url = await uploadAudioBlob(blob, filename, blob.type || mimeType, setUploadProgress)
       setBlobUrl(url)
     } catch (e: any) {
-      const msg: string = e?.message ?? ''
-      setErrMsg(
-        msg.includes('413')
-          ? '録音ファイルが大きすぎるため保存できません。「逐語録から再試行」で議事録を生成してください。'
-          : 'アップロードに失敗しました。ネットワーク接続を確認してください。（録音データは保持されています）'
-      )
+      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
       setPhase('error')
       return
     }
@@ -590,24 +524,8 @@ export default function App() {
     await runFromTranscribe(blobUrl)
   }
 
-  // 逐語録テキストから議事録生成（アップロード失敗時のフォールバック）
-  async function runFromLiveText() {
-    const transcript = liveBlocksRef.current
-      .filter(b => b.include)
-      .map(b => b.text.trim())
-      .filter(Boolean)
-      .join('\n')
-
-    if (!transcript) {
-      setErrMsg('文字起こしテキストがありません。録音を確認してください。')
-      setPhase('error')
-      return
-    }
-    setDbgTranscript(transcript)
-    await runFromExtract(transcript)
-  }
-
   async function runFromTranscribe(url: string) {
+    // 1. Transcribe
     let transcript: string
     try {
       setPhase('transcribing')
@@ -625,11 +543,8 @@ export default function App() {
       setPhase('error')
       return
     }
-    await runFromExtract(transcript)
-  }
 
-  async function runFromExtract(transcript: string) {
-    // 1. Extract structured data
+    // 2. Extract structured data
     let structured: any
     try {
       setPhase('extracting')
@@ -643,12 +558,12 @@ export default function App() {
       ;({ structured } = await exRes.json())
       setDbgStructured(structured)
     } catch (e: any) {
-      setErrMsg(`構造化抽出に失敗しました: ${e.message} — 再試行してください。`)
+      setErrMsg(`構造化抽出に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
       setPhase('error')
       return
     }
 
-    // 2. Generate detailed + summary
+    // 3. Generate detailed + summary
     try {
       setPhase('generating')
       setProcStep('詳細版・要約版を生成中… (Claude)')
@@ -667,7 +582,7 @@ export default function App() {
       setActiveTab('detailed')
       setPhase('preview')
     } catch (e: any) {
-      setErrMsg(`議事録生成に失敗しました: ${e.message} — 再試行してください。`)
+      setErrMsg(`議事録生成に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
       setPhase('error')
     }
   }
@@ -973,7 +888,6 @@ export default function App() {
     if (mockTimerRef.current) { clearInterval(mockTimerRef.current); mockTimerRef.current = null }
     // Reset live state
     setLiveBlocks([])
-    liveBlocksRef.current = []
     setLiveBuf('')
     setLiveInterim('')
     setNewBlockCount(0)
@@ -1790,20 +1704,9 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
               AI整文済みです。内容を確認し、必要なら修正してください。
             </div>
           )}
-          {/* format_failed: メッセージ + 再試行ボタンをテキストエリア上部に表示 */}
           {block.status === 'format_failed' && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
-              <span style={{ fontSize: 11, color: '#d97706' }}>
-                AI整文に失敗しました。原文を表示しています。
-              </span>
-              {onRetryFormat && (
-                <button
-                  onClick={onRetryFormat}
-                  style={{ ...liveActionBtn(false, '#d97706', '#fffbeb', '#fde68a'), flexShrink: 0 }}
-                >
-                  🔄 AI整文を再試行
-                </button>
-              )}
+            <div style={{ fontSize: 11, color: '#d97706', marginBottom: 5 }}>
+              AI整文に失敗しました。原文を表示しています。
             </div>
           )}
           <textarea
@@ -1841,6 +1744,15 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {/* AI整文を再試行 — format_failed時のみ表示 */}
+        {block.status === 'format_failed' && onRetryFormat && (
+          <button
+            onClick={onRetryFormat}
+            style={liveActionBtn(false, '#d97706', '#fffbeb', '#fde68a')}
+          >
+            ↺ AI整文を再試行
+          </button>
+        )}
         {/* 確認OK — formatting中は無効（Gemini結果が上書きしてしまうため） */}
         <button
           disabled={block.status === 'formatting'}
@@ -1898,7 +1810,7 @@ function uploadAudioBlob(
       } else {
         let msg = 'アップロードに失敗しました'
         try { msg = JSON.parse(xhr.responseText).error || msg } catch { /* ignore */ }
-        reject(new Error(`HTTP ${xhr.status}: ${msg}`))
+        reject(new Error(msg))
       }
     }
     xhr.onerror = () => reject(new Error('ネットワークエラー'))
