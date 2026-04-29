@@ -180,6 +180,7 @@ export default function App() {
   const pausedMsRef  = useRef(0)
   const pauseStartRef = useRef(0)
   const lastBlobRef  = useRef<{ blob: Blob; mimeType: string } | null>(null)
+  const liveBlocksRef = useRef<Block[]>([])
 
   // ── Live transcription refs ─────────────────────────────────────────────
   const wsRef          = useRef<WebSocket | null>(null)
@@ -196,6 +197,7 @@ export default function App() {
 
   liveIntervalRef.current = liveInterval
   atBottomRef.current = atBottom
+  liveBlocksRef.current = liveBlocks
 
   const setField = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setInfo(p => ({ ...p, [k]: e.target.value }))
@@ -264,7 +266,11 @@ export default function App() {
     setLiveBuf('')
     setLiveInterim('')
     setLiveBufStart(endSec)
-    setLiveBlocks(prev => [...prev, block])
+    setLiveBlocks(prev => {
+      const next = [...prev, block]
+      liveBlocksRef.current = next
+      return next
+    })
     if (!atBottomRef.current) {
       setNewBlockCount(n => n + 1)
     } else {
@@ -317,6 +323,7 @@ export default function App() {
   async function startRec() {
     // Reset live state
     setLiveBlocks([])
+    liveBlocksRef.current = []
     setLiveBuf('')
     setLiveInterim('')
     setLiveBufStart(0)
@@ -585,7 +592,7 @@ export default function App() {
 
   // 逐語録テキストから議事録生成（アップロード失敗時のフォールバック）
   async function runFromLiveText() {
-    const transcript = liveBlocks
+    const transcript = liveBlocksRef.current
       .filter(b => b.include)
       .map(b => b.text.trim())
       .filter(Boolean)
@@ -966,6 +973,7 @@ export default function App() {
     if (mockTimerRef.current) { clearInterval(mockTimerRef.current); mockTimerRef.current = null }
     // Reset live state
     setLiveBlocks([])
+    liveBlocksRef.current = []
     setLiveBuf('')
     setLiveInterim('')
     setNewBlockCount(0)
