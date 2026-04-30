@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { upload } from '@vercel/blob/client'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -655,16 +655,27 @@ export default function App() {
 
     console.log(`[pipeline] Deepgram raw transcript — ${rawTranscript.length} chars (保険用)`)
 
-    // liveBlocks（Gemini整文・ユーザー確認済み）を主入力として構築
-    const liveBlocksTranscript = buildLiveBlocksTranscript(liveBlocksRef.current)
-    const includedCount = liveBlocksRef.current.filter(b => b.include).length
+    // liveBlocks を主入力として構築（確認済み・未確認どちらも include: true なら対象）
+    const allBlocks = liveBlocksRef.current
+    const includedBlocks  = allBlocks.filter(b => b.include)
+    const confirmedBlocks = allBlocks.filter(b => b.status === 'confirmed')
+    const excludedBlocks  = allBlocks.filter(b => !b.include)
+
+    console.log(
+      `[pipeline] liveBlocks状態 — 全${allBlocks.length}件:` +
+      ` 確認済み=${confirmedBlocks.length}件,` +
+      ` 未確認（include:true）=${includedBlocks.length - confirmedBlocks.length}件,` +
+      ` 除外=${excludedBlocks.length}件`
+    )
+
+    const liveBlocksTranscript = buildLiveBlocksTranscript(allBlocks)
 
     let transcriptForExtract: string
     if (liveBlocksTranscript.trim().length > 0) {
       transcriptForExtract = liveBlocksTranscript
       console.log(
         `[pipeline] Sonnet入力: liveBlocks由来 — ${transcriptForExtract.length} chars, ` +
-        `${includedCount}ブロック（Gemini整文・ユーザー確認済み）`
+        `${includedBlocks.length}ブロック（確認済み・未確認どちらも含む、除外のみ省く）`
       )
     } else {
       transcriptForExtract = rawTranscript
@@ -1803,14 +1814,14 @@ interface LiveBlockCardProps {
 function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRetryFormat }: LiveBlockCardProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Gemini整文完了時（block.text更新）にテキストエリアを自動リサイズ
-  useEffect(() => {
+  // 整文完了・status変化のタイミングで高さを同期的に再計算（useLayoutEffect で描画前に確定させる）
+  useLayoutEffect(() => {
     if (textareaRef.current) {
       const el = textareaRef.current
       el.style.height = 'auto'
       el.style.height = `${el.scrollHeight}px`
     }
-  }, [block.text])
+  }, [block.text, block.status])
 
   const statusMeta: Record<BlockStatus, { color: string; bg: string; label: string }> = {
     streaming:     { color: '#9ca3af', bg: '#f9fafb',  label: '● 取得中'        },
