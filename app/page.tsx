@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { upload } from '@vercel/blob/client'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Phase =
@@ -1893,7 +1894,7 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
               marginBottom: 8,
               minHeight: 140,
               resize: 'vertical',
-              overflow: 'auto',
+              overflow: 'hidden',
               lineHeight: 1.8,
             }}
           />
@@ -1961,33 +1962,23 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
 }
 
 // ── Upload helper ────────────────────────────────────────────────────────────
-function uploadAudioBlob(
+// Vercel Blob にブラウザから直接アップロード（サーバーレス関数のbody制限を回避）
+async function uploadAudioBlob(
   blob: Blob,
   filename: string,
   contentType: string,
   onProgress: (pct: number) => void,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100))
-    }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try { resolve(JSON.parse(xhr.responseText).url) }
-        catch { reject(new Error('レスポンスの解析に失敗しました')) }
-      } else {
-        let msg = 'アップロードに失敗しました'
-        try { msg = JSON.parse(xhr.responseText).error || msg } catch { /* ignore */ }
-        reject(new Error(msg))
-      }
-    }
-    xhr.onerror = () => reject(new Error('ネットワークエラー'))
-    const params = new URLSearchParams({ filename, type: contentType })
-    xhr.open('POST', `/api/upload-audio?${params}`)
-    xhr.setRequestHeader('Content-Type', contentType)
-    xhr.send(blob)
+  const result = await upload(filename, blob, {
+    access: 'public',
+    handleUploadUrl: '/api/blob-token',
+    contentType,
+    multipart: true,
+    onUploadProgress: ({ percentage }) => {
+      onProgress(Math.round(percentage))
+    },
   })
+  return result.url
 }
 
 // ── Styles ──────────────────────────────────────────────────────────────────
