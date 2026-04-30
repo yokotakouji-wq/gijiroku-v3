@@ -52,7 +52,23 @@ interface Block {
   memo: string
 }
 
+type ChunkStatus = 'pending' | 'uploading' | 'transcribing' | 'done' | 'error'
+
+interface AudioChunk {
+  index: number
+  startedAt: number
+  endedAt: number
+  durationSec: number
+  blob: Blob
+  url: string | null
+  transcript: string | null
+  status: ChunkStatus
+  error?: string
+}
+
 // ── Utils ──────────────────────────────────────────────────────────────────
+const CHUNK_DURATION_MS = 5 * 60 * 1000  // 5分ごとにチャンクを切り替え
+
 const LIVE_INTERVALS = [
   { l: '30秒', v: 30 },
   { l: '1分',  v: 60 },
@@ -126,6 +142,7 @@ export default function App() {
   const [errMsg, setErrMsg]     = useState('')
   const [blobUrl, setBlobUrl]   = useState('')
   const [inferredAtt, setInferredAtt] = useState('')
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null)
   const [isPaused, setIsPaused] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   // debug
@@ -164,6 +181,15 @@ export default function App() {
   const pauseStartRef = useRef(0)
   const lastBlobRef  = useRef<{ blob: Blob; mimeType: string } | null>(null)
 
+  // ── Chunk recording refs ────────────────────────────────────────────────
+  const audioChunksRef    = useRef<AudioChunk[]>([])
+  const chunkIndexRef     = useRef(0)
+  const isRotatingRef     = useRef(false)
+  const recordingStreamRef = useRef<MediaStream | null>(null)
+  const chunkIntervalRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const chunkMimeTypeRef  = useRef('')
+  const chunkStartedAtRef = useRef(0)
+
   // ── Live transcription refs ─────────────────────────────────────────────
   const wsRef          = useRef<WebSocket | null>(null)
   const liveMrRef      = useRef<MediaRecorder | null>(null)
@@ -176,9 +202,11 @@ export default function App() {
   const atBottomRef    = useRef(true)
   const blockScrollRef = useRef<HTMLDivElement>(null)
   const blockIdRef     = useRef(0)
+  const liveBlocksRef  = useRef<Block[]>([])
 
-  liveIntervalRef.current = liveInterval
-  atBottomRef.current = atBottom
+  liveIntervalRef.current  = liveInterval
+  atBottomRef.current      = atBottom
+  liveBlocksRef.current    = liveBlocks
 
   const setField = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setInfo(p => ({ ...p, [k]: e.target.value }))
@@ -308,20 +336,29 @@ export default function App() {
     setTimerKey(0)
     setWsConnected(false)
     setWsError('')
+    setBlobUrl('')
     liveBufRef.current      = ''
     liveBufStartRef.current = 0
     blockIdRef.current      = 0
     atBottomRef.current     = true
 
+    // Reset chunk state
+    audioChunksRef.current = []
+    chunkIndexRef.current  = 0
+    isRotatingRef.current  = false
+    setChunkProgress(null)
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      recordingStreamRef.current = stream
       const mimeType = getMimeType()
-      const mr = new MediaRecorder(stream, { mimeType })
-      chunksRef.current = []
-      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-      mr.onstop = () => { stream.getTracks().forEach(t => t.stop()); runPipeline(mimeType) }
-      mr.start(1000)
-      mrRef.current = mr
+      chunkMimeTypeRef.current = mimeType
+
+      startChunkRecorder(stream, mimeType)
+
+      // 5分ごとにチャンクを切り替え
+      chunkIntervalRef.current = setInterval(() => rotateChunk(), CHUNK_DURATION_MS)
+
       startWall.current = Date.now()
       setInfo(p => ({ ...p, dateStart: fmtLocal(new Date()) }))
       setPhase('recording')
@@ -340,6 +377,53 @@ export default function App() {
       setErrMsg('マイクへのアクセスが許可されていません。ブラウザの設定を確認してください。')
       setPhase('error')
     }
+  }
+
+  function startChunkRecorder(stream: MediaStream, mimeType: string) {
+    const index = chunkIndexRef.current++
+    chunksRef.current = []
+    chunkStartedAtRef.current = Date.now()
+
+    console.log(`[chunk] recorder #${index} starting at ${new Date().toISOString()}`)
+
+    const mr = new MediaRecorder(stream, { mimeType })
+    mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+    mr.onstop = () => {
+      const endedAt = Date.now()
+      const startedAt = chunkStartedAtRef.current
+      const durationSec = Math.round((endedAt - startedAt) / 1000)
+
+      console.log(`[chunk] recorder #${index} stopped — duration: ${durationSec}s, data-chunks: ${chunksRef.current.length}`)
+
+      const blob = new Blob(chunksRef.current, { type: mimeType })
+      console.log(`[chunk] blob #${index} size: ${blob.size} bytes`)
+
+      const chunk: AudioChunk = {
+        index, startedAt, endedAt, durationSec,
+        blob, url: null, transcript: null, status: 'pending',
+      }
+      audioChunksRef.current.push(chunk)
+
+      if (isRotatingRef.current) {
+        isRotatingRef.current = false
+        console.log(`[chunk] rotating — starting recorder #${chunkIndexRef.current}`)
+        startChunkRecorder(stream, mimeType)
+      } else {
+        console.log(`[chunk] final stop — total chunks: ${audioChunksRef.current.length}, stopping stream`)
+        stream.getTracks().forEach(t => t.stop())
+        recordingStreamRef.current = null
+        processAllChunks(mimeType)
+      }
+    }
+    mr.start(1000)
+    mrRef.current = mr
+  }
+
+  function rotateChunk() {
+    if (mrRef.current?.state !== 'recording') return
+    console.log(`[chunk] rotate triggered at ${new Date().toISOString()} — stopping recorder #${chunkIndexRef.current - 1}`)
+    isRotatingRef.current = true
+    mrRef.current.stop()
   }
 
   async function connectDeepgramWS(stream: MediaStream) {
@@ -455,6 +539,8 @@ export default function App() {
     if (timerRef.current) clearInterval(timerRef.current)
     if (blockTimerRef.current) { clearInterval(blockTimerRef.current); blockTimerRef.current = null }
     if (mockTimerRef.current) { clearInterval(mockTimerRef.current); mockTimerRef.current = null }
+    // チャンクローテーションを止める（これ以上の分割はしない）
+    if (chunkIntervalRef.current) { clearInterval(chunkIntervalRef.current); chunkIntervalRef.current = null }
 
     const dur = Date.now() - startWall.current
     const end = new Date(new Date(info.dateStart).getTime() + dur)
@@ -468,83 +554,158 @@ export default function App() {
     if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close()
     setWsConnected(false)
 
-    // メイン MediaRecorder 停止 → onstop → tracks 停止 → runPipeline
+    // メイン MediaRecorder 停止 → onstop → processAllChunks
+    // isRotatingRef を false にして、次の onstop を「最終停止」として扱う
+    isRotatingRef.current = false
     if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
 
   // ── Pipeline ────────────────────────────────────────────────────────────
-  async function runPipeline(mimeType: string) {
-    const audioBlob = new Blob(chunksRef.current, { type: mimeType })
-    lastBlobRef.current = { blob: audioBlob, mimeType }
+  async function processAllChunks(mimeType: string) {
+    const chunks = audioChunksRef.current
+    const total = chunks.length
+
+    console.log(`[pipeline] processAllChunks — total chunks: ${total}`)
+    setChunkProgress({ current: 0, total })
 
     const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
-    const filename = `audio/meeting-${Date.now()}.${ext}`
+    const transcripts: string[] = []
 
-    let url: string
-    try {
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      const label = `チャンク ${i + 1}/${total}`
+
+      // Upload
       setPhase('uploading')
+      setProcStep(`${label} をアップロード中… 画面を閉じないでください`)
       setUploadProgress(0)
-      setProcStep('音声データをアップロード中… 画面を閉じないでください')
-      url = await uploadAudioBlob(audioBlob, filename, audioBlob.type || mimeType, setUploadProgress)
-      setBlobUrl(url)
-    } catch (e: any) {
-      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
-      setPhase('error')
-      return
-    }
+      chunk.status = 'uploading'
 
-    await runFromTranscribe(url)
-  }
+      const filename = `audio/meeting-${Date.now()}-chunk${chunk.index}.${ext}`
+      console.log(`[pipeline] uploading ${label} — ${chunk.durationSec}s, ${chunk.blob.size} bytes`)
 
-  async function retryUpload() {
-    const saved = lastBlobRef.current
-    if (!saved) return
-    setErrMsg('')
-    const { blob, mimeType } = saved
-    const ext = mimeType.includes('mp4') ? 'm4a' : 'webm'
-    const filename = `audio/meeting-${Date.now()}.${ext}`
-    let url: string
-    try {
-      setPhase('uploading')
-      setUploadProgress(0)
-      setProcStep('音声データをアップロード中… 画面を閉じないでください')
-      url = await uploadAudioBlob(blob, filename, blob.type || mimeType, setUploadProgress)
-      setBlobUrl(url)
-    } catch (e: any) {
-      setErrMsg('アップロードに失敗しました。ネットワーク接続を確認して「再試行」を押してください。（録音データは保持されています）')
-      setPhase('error')
-      return
-    }
-    await runFromTranscribe(url)
-  }
+      try {
+        const url = await uploadAudioBlob(chunk.blob, filename, mimeType, setUploadProgress)
+        chunk.url = url
+        console.log(`[pipeline] upload ok ${label} — ${url}`)
+      } catch (e: any) {
+        chunk.status = 'error'
+        chunk.error = e.message
+        console.error(`[pipeline] upload failed ${label}:`, e.message)
+        setErrMsg(`${label} のアップロードに失敗しました: ${e.message}`)
+        setPhase('error')
+        return
+      }
 
-  async function retryFromTranscribe() {
-    if (!blobUrl) return
-    setErrMsg('')
-    await runFromTranscribe(blobUrl)
-  }
-
-  async function runFromTranscribe(url: string) {
-    // 1. Transcribe
-    let transcript: string
-    try {
+      // Transcribe
       setPhase('transcribing')
-      setProcStep('文字起こし中… (Deepgram Nova-3)')
-      const txRes = await fetchWithTimeout('/api/transcribe', {
+      setProcStep(`${label} を文字起こし中… (Deepgram Nova-3)`)
+      chunk.status = 'transcribing'
+      console.log(`[pipeline] transcribing ${label}`)
+
+      try {
+        const txRes = await fetchWithTimeout('/api/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: chunk.url }),
+        })
+        if (!txRes.ok) throw new Error((await txRes.json()).error || '文字起こし失敗')
+        const { transcript } = await txRes.json()
+        chunk.transcript = transcript
+        chunk.status = 'done'
+        transcripts.push(transcript)
+        setChunkProgress({ current: i + 1, total })
+        console.log(`[pipeline] transcribe ok ${label} — ${transcript.length} chars`)
+      } catch (e: any) {
+        chunk.status = 'error'
+        chunk.error = e.message
+        console.error(`[pipeline] transcribe failed ${label}:`, e.message)
+        setErrMsg(`${label} の文字起こしに失敗しました: ${e.message}`)
+        setPhase('error')
+        return
+      }
+    }
+
+    // Blob を一括削除（ベストエフォート）
+    const urlsToDelete = chunks.filter(c => c.url).map(c => c.url!)
+    if (urlsToDelete.length > 0) {
+      fetch('/api/delete-audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ urls: urlsToDelete }),
+      }).catch(e => {
+        console.warn('[pipeline] blob deletion failed (best effort):', e.message)
+        urlsToDelete.forEach(u => console.warn('[pipeline] failed to delete blob:', u))
       })
-      if (!txRes.ok) throw new Error((await txRes.json()).error || '文字起こしに失敗しました')
-      ;({ transcript } = await txRes.json())
-      setDbgTranscript(transcript)
-    } catch (e: any) {
-      setErrMsg(`文字起こしに失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
-      setPhase('error')
-      return
     }
 
-    // 2. Extract structured data
+    // Deepgram 生テキストを保険として組み立て（チャンク境界マーカー付き）
+    const fmtChunkTime = (ms: number) => {
+      const totalSec = Math.round(ms / 1000)
+      return `${pad(Math.floor(totalSec / 60))}:${pad(totalSec % 60)}`
+    }
+    const origin = chunks[0]?.startedAt ?? 0
+    const rawTranscript = chunks.map((c, i) => {
+      const from = fmtChunkTime(c.startedAt - origin)
+      const to   = fmtChunkTime(c.endedAt   - origin)
+      const header = `--- チャンク ${i + 1} / ${total}（${from}〜${to}） ---`
+      return `${header}\n${c.transcript ?? ''}`
+    }).join('\n\n')
+
+    console.log(`[pipeline] Deepgram raw transcript — ${rawTranscript.length} chars (保険用)`)
+
+    // liveBlocks（Gemini整文・ユーザー確認済み）を主入力として構築
+    const liveBlocksTranscript = buildLiveBlocksTranscript(liveBlocksRef.current)
+    const includedCount = liveBlocksRef.current.filter(b => b.include).length
+
+    let transcriptForExtract: string
+    if (liveBlocksTranscript.trim().length > 0) {
+      transcriptForExtract = liveBlocksTranscript
+      console.log(
+        `[pipeline] Sonnet入力: liveBlocks由来 — ${transcriptForExtract.length} chars, ` +
+        `${includedCount}ブロック（Gemini整文・ユーザー確認済み）`
+      )
+    } else {
+      transcriptForExtract = rawTranscript
+      console.warn('[pipeline] liveBlocksが空または全除外 — Deepgram生テキストにフォールバック')
+      console.log(`[pipeline] Sonnet入力: Deepgram生テキスト — ${transcriptForExtract.length} chars`)
+    }
+
+    setDbgTranscript(transcriptForExtract)
+    await runFromExtract(transcriptForExtract)
+  }
+
+  function buildLiveBlocksTranscript(blocks: Block[]): string {
+    const included = blocks.filter(b => b.include)
+    if (included.length === 0) return ''
+    return included.map(b => {
+      const text = (b.text?.trim()) || (b.orig?.trim()) || ''
+      if (!text) return null
+      return `[${fmtSec(b.start)}〜${fmtSec(b.end)}]\n${text}`
+    }).filter(Boolean).join('\n\n')
+  }
+
+  async function retryProcessing() {
+    if (audioChunksRef.current.length === 0) return
+    // アップロード済みチャンクは URL が残っているが再アップロードする（シンプルな再試行）
+    audioChunksRef.current.forEach(c => {
+      c.status = 'pending'
+      c.url = null
+      c.transcript = null
+      c.error = undefined
+    })
+    setErrMsg('')
+    await processAllChunks(chunkMimeTypeRef.current)
+  }
+
+  async function retryFromExtract() {
+    if (!dbgTranscript) return
+    setErrMsg('')
+    await runFromExtract(dbgTranscript)
+  }
+
+  async function runFromExtract(transcript: string) {
+    // 1. Extract structured data
     let structured: any
     try {
       setPhase('extracting')
@@ -558,12 +719,12 @@ export default function App() {
       ;({ structured } = await exRes.json())
       setDbgStructured(structured)
     } catch (e: any) {
-      setErrMsg(`構造化抽出に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
+      setErrMsg(`構造化抽出に失敗しました: ${e.message} — 「構造化・議事録を再試行」を押してください。`)
       setPhase('error')
       return
     }
 
-    // 3. Generate detailed + summary
+    // 2. Generate detailed + summary
     try {
       setPhase('generating')
       setProcStep('詳細版・要約版を生成中… (Claude)')
@@ -582,7 +743,7 @@ export default function App() {
       setActiveTab('detailed')
       setPhase('preview')
     } catch (e: any) {
-      setErrMsg(`議事録生成に失敗しました: ${e.message} — 「文字起こしから再試行」を押してください。`)
+      setErrMsg(`議事録生成に失敗しました: ${e.message} — 「構造化・議事録を再試行」を押してください。`)
       setPhase('error')
     }
   }
@@ -885,7 +1046,11 @@ export default function App() {
     setPrevDetailed(null)
     setPrevSummary(null)
     setWsError('')
+    setBlobUrl('')
+    setChunkProgress(null)
+    audioChunksRef.current = []
     if (mockTimerRef.current) { clearInterval(mockTimerRef.current); mockTimerRef.current = null }
+    if (chunkIntervalRef.current) { clearInterval(chunkIntervalRef.current); chunkIntervalRef.current = null }
     // Reset live state
     setLiveBlocks([])
     setLiveBuf('')
@@ -1008,6 +1173,11 @@ export default function App() {
                   <div style={{ height:'100%', background:'#1a56db', borderRadius:4, width:`${uploadProgress}%`, transition:'width .3s' }}/>
                 </div>
                 <div style={{ fontSize:11, color:'#6b7280' }}>{uploadProgress}%</div>
+                {chunkProgress && chunkProgress.total > 1 && (
+                  <div style={{ fontSize:11, color:'#9ca3af', marginTop:6 }}>
+                    音声チャンク {chunkProgress.current + 1} / {chunkProgress.total}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1018,6 +1188,11 @@ export default function App() {
               <div style={{ textAlign:'center' }}>
                 <div style={{ fontSize:13, fontWeight:500, marginBottom:10 }}>{procStep}</div>
                 <ProcBar phase={phase}/>
+                {chunkProgress && chunkProgress.total > 1 && phase === 'transcribing' && (
+                  <div style={{ fontSize:11, color:'#9ca3af', marginTop:8 }}>
+                    文字起こし済み {chunkProgress.current} / {chunkProgress.total} チャンク
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1037,19 +1212,13 @@ export default function App() {
           {phase === 'error' && (
             <div style={{ padding:'20px' }}>
               <div style={errBoxStyle}>{errMsg}</div>
-              {blobUrl && (
-                <p style={{ fontSize:11, color:'#6b7280', marginBottom:10 }}>
-                  録音データは保存済みです。
-                  <a href={blobUrl} target="_blank" style={{ color:'#1a56db', marginLeft:4 }}>ダウンロード</a>
-                </p>
-              )}
               <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                <Btn onClick={() => { resetToIdle(); setErrMsg(''); setBlobUrl(''); lastBlobRef.current = null }}>最初から</Btn>
-                {lastBlobRef.current && !blobUrl && (
-                  <Btn accent onClick={retryUpload}>再試行（アップロード）</Btn>
+                <Btn onClick={() => { resetToIdle(); setErrMsg('') }}>最初から</Btn>
+                {audioChunksRef.current.length > 0 && (
+                  <Btn accent onClick={retryProcessing}>チャンク処理を再試行</Btn>
                 )}
-                {blobUrl && (
-                  <Btn accent onClick={retryFromTranscribe}>文字起こしから再試行</Btn>
+                {dbgTranscript && (
+                  <Btn accent onClick={retryFromExtract}>構造化・議事録を再試行</Btn>
                 )}
               </div>
             </div>
