@@ -5,7 +5,7 @@ export const runtime = 'nodejs'
 export const maxDuration = 300
 
 const client = new Anthropic()
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6'
+const MODEL = process.env.ANTHROPIC_GENERATE_MODEL || 'claude-haiku-4-5'
 const MAX_TOKENS = 8192
 
 const estimateTokens = (text: string) => Math.ceil(text.length / 1.5)
