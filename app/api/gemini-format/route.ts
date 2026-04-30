@@ -1,13 +1,12 @@
-import { NextResponse } from 'next/server'
+import Anthropic from '@anthropic-ai/sdk'
+import { NextRequest, NextResponse } from 'next/server'
 
 export const runtime = 'nodejs'
 
-const GEMINI_MODEL = 'gemini-2.5-flash-lite'
-// 上記が使えない場合のフォールバック候補: 'gemini-2.5-flash-lite-preview-06-17' / 'gemini-2.0-flash-lite'
+const client = new Anthropic()
+const MODEL = process.env.ANTHROPIC_FORMAT_MODEL || 'claude-haiku-4-5'
 
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`
-
-const SYSTEM_PROMPT = `あなたは会議音声の文字起こしを、人間が確認・修正しやすい文章に整える補助役です。
+const SYSTEM = `あなたは会議音声の文字起こしを、人間が確認・修正しやすい文章に整える補助役です。
 
 これは完成した議事録ではありません。
 最終的な議事録は、この後で別のAIが作成します。
@@ -20,6 +19,8 @@ const SYSTEM_PROMPT = `あなたは会議音声の文字起こしを、人間が
 - 言い直しや重複を整理する
 - 長すぎる文を分ける
 - 話の順序が少し崩れている場合は、意味が変わらない範囲で自然に並べ替える
+- 話題や発言のまとまりごとに改行する
+- 明らかな誤字や音声認識ミスは自然に直す
 - です・ます調、または自然な記録文調に整える
 
 守ってほしいこと：
@@ -31,17 +32,11 @@ const SYSTEM_PROMPT = `あなたは会議音声の文字起こしを、人間が
 
 出力は、整えた本文だけにしてください。`
 
-export async function POST(request: Request): Promise<NextResponse> {
-  const apiKey = process.env.GEMINI_API_KEY
-  if (!apiKey) {
-    console.error('[gemini-format] GEMINI_API_KEY not set')
-    return NextResponse.json({ error: 'GEMINI_API_KEY が設定されていません' }, { status: 500 })
-  }
-
+export async function POST(req: NextRequest): Promise<NextResponse> {
   let text: string
   let context: string
   try {
-    const body = await request.json()
+    const body = await req.json()
     text    = String(body?.text    ?? '').trim()
     context = String(body?.context ?? '').trim()
   } catch {
@@ -52,38 +47,27 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ formatted: '' })
   }
 
-  // 直前ブロックを文脈として渡すことで約60秒分の文脈で整文
-  const userText = context
-    ? `${SYSTEM_PROMPT}\n\n【直前の発話ブロック（参考文脈・整文不要）】\n${context}\n\n【整文対象の発話ブロック】\n${text}`
-    : `${SYSTEM_PROMPT}\n\n---\n${text}`
+  const userContent = context
+    ? `【直前の発話ブロック（参考文脈・整文不要）】\n${context}\n\n【整文対象の発話ブロック】\n${text}`
+    : text
 
   try {
-    const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: userText }] }],
-        generationConfig: { temperature: 0.1 },
-      }),
+    const res = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1024,
+      system: SYSTEM,
+      messages: [{ role: 'user', content: userContent }],
     })
 
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '')
-      let errMsg = errBody.slice(0, 400)
-      try {
-        const parsed = JSON.parse(errBody)
-        errMsg = parsed?.error?.message ?? errMsg
-      } catch { /* ignore */ }
-      console.error(`[gemini-format] API error status=${res.status} model=${GEMINI_MODEL} message=${errMsg}`)
-      const returnStatus = res.status === 429 ? 429 : 502
-      return NextResponse.json({ error: `Gemini API error: ${res.status}` }, { status: returnStatus })
-    }
+    const formatted = res.content
+      .filter(b => b.type === 'text')
+      .map(b => (b as any).text)
+      .join('')
+      .trim()
 
-    const data = await res.json()
-    const formatted: string = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-    return NextResponse.json({ formatted: formatted.trim() || text })
+    return NextResponse.json({ formatted: formatted || text })
   } catch (e: any) {
-    console.error(`[gemini-format] fetch exception model=${GEMINI_MODEL}:`, e?.message)
-    return NextResponse.json({ error: 'Gemini APIへの接続に失敗しました' }, { status: 502 })
+    console.error(`[haiku-format] error model=${MODEL}:`, e?.message)
+    return NextResponse.json({ error: e.message }, { status: 500 })
   }
 }
