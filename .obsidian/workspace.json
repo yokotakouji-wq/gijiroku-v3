@@ -1,0 +1,213 @@
+{
+  "main": {
+    "id": "ccaf2930da89a550",
+    "type": "split",
+    "children": [
+      {
+        "id": "bd32c2e3092404f0",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b85b5cf15c365478",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "docs/chatgpt-log/2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存"
+            }
+          },
+          {
+            "id": "9449d5b56837831b",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "docs/chatgpt-log/2026-04-30 議事録メーカー｜Deepgram→Haiku→Sonnet→Haiku構成への変更.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "2026-04-30 議事録メーカー｜Deepgram→Haiku→Sonnet→Haiku構成への変更"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "e4d3822e6919303c",
+    "type": "split",
+    "children": [
+      {
+        "id": "2885058e41bfd29e",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "741686463616da5e",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "ファイルエクスプローラ"
+            }
+          },
+          {
+            "id": "554b5f6d6f88074d",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "検索"
+            }
+          },
+          {
+            "id": "b135845d97224f70",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "ブックマーク"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "46b34f25ee715025",
+    "type": "split",
+    "children": [
+      {
+        "id": "881b06519b04b132",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "edd1b377c7008511",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "docs/chatgpt-log/2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存へのバックリンク"
+            }
+          },
+          {
+            "id": "2d2c5ee642c0a787",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "docs/chatgpt-log/2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存からのアウトゴーイングリンク"
+            }
+          },
+          {
+            "id": "3fc31a8d5ca1f95d",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "タグ"
+            }
+          },
+          {
+            "id": "db66ee0ca067c4fe",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "すべてのプロパティ"
+            }
+          },
+          {
+            "id": "7111b4fec81e5715",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "docs/chatgpt-log/2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存のアウトライン"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:クイックスイッチャーを開く": false,
+      "graph:グラフビューを開く": false,
+      "canvas:新規キャンバスを作成": false,
+      "daily-notes:今日のデイリーノートを開く": false,
+      "templates:テンプレートを挿入": false,
+      "command-palette:コマンドパレットを開く": false,
+      "bases:新規ベースを作成": false
+    }
+  },
+  "active": "9449d5b56837831b",
+  "lastOpenFiles": [
+    "app/api/blob-token/route.ts",
+    "app/api/blob-token",
+    "docs/claude-code-log/2026-04-30_パイプライン変更_liveBlocks接続とHaiku化.md",
+    "docs/chatgpt-log/2026-04-30_ClaudeCode作業ログ運用とChatGPTログ保存.md",
+    "docs/chatgpt-log/2026-04-30 議事録メーカー｜Deepgram→Haiku→Sonnet→Haiku構成への変更.md",
+    "app/api/delete-audio/route.ts",
+    "app/api/delete-audio",
+    "docs/ClaudeCode作業ログ運用_指示早見表.md",
+    "docs/chatgpt-log"
+  ]
+}
