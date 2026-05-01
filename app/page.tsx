@@ -1360,7 +1360,7 @@ export default function App() {
             <div
               ref={blockScrollRef}
               onScroll={handleBlockScroll}
-              style={{ maxHeight: 480, overflowY: 'auto', marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}
+              style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}
             >
               {/* 空の状態 — 録音中かつブロックなし */}
               {phase === 'recording' && liveBlocks.length === 0 && !liveBuf && !liveInterim && (
