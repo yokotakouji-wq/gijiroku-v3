@@ -1072,6 +1072,256 @@ export default function App() {
     setMemoOpen({})
   }
 
+  function renderPreviewCard() {
+    if (phase !== 'preview' || !displayMin) return null
+
+    return (
+      <div style={{ background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, overflow:'hidden', marginTop:10 }}>
+
+        {/* Tabs */}
+        <div style={{ display:'flex', borderBottom:'0.5px solid #e8e8e8' }}>
+          {(['detailed', 'summary'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => { setActiveTab(tab); setIsEditing(false); setEditBuf(null) }}
+              style={{
+                padding: '10px 24px',
+                fontSize: 12,
+                fontWeight: activeTab === tab ? 600 : 400,
+                color: activeTab === tab ? '#1a56db' : '#6b7280',
+                background: 'none',
+                border: 'none',
+                borderBottom: activeTab === tab ? '2px solid #1a56db' : '2px solid transparent',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'color .15s',
+              }}
+            >
+              {tab === 'detailed' ? '詳細版' : '要約版'}
+            </button>
+          ))}
+          <div style={{ flex:1, borderBottom:'2px solid transparent' }}/>
+        </div>
+
+        {/* Preview header */}
+        <div style={{ padding:'12px 18px', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <span style={{ fontSize:13, fontWeight:500, color:'#374151' }}>
+            議事録プレビュー
+            <span style={{ fontSize:11, color:'#9ca3af', marginLeft:6 }}>
+              ({activeTab === 'detailed' ? '詳細版' : '要約版'})
+            </span>
+          </span>
+          {!isEditing ? (
+            <button onClick={startEdit} style={{ fontSize:12, color:'#1a56db', background:'none', border:'none', cursor:'pointer' }}>
+              ✏️ 編集する
+            </button>
+          ) : (
+            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+              <button onClick={cancelEdit} style={{ fontSize:12, color:'#6b7280', background:'none', border:'none', cursor:'pointer' }}>
+                キャンセル
+              </button>
+              <button onClick={saveEdit} style={{ fontSize:12, color:'white', background:'#1a56db', border:'none', borderRadius:6, padding:'5px 14px', cursor:'pointer', fontWeight:500 }}>
+                ✓ 保存
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Minutes body */}
+        <div style={{ padding:'18px' }}>
+          {/* Summary */}
+          <Section title="会議の概要">
+            {isEditing ? (
+              <textarea value={editBuf?.summary || ''} onChange={e => updEdit('summary', e.target.value)}
+                style={{ ...taStyle, minHeight:80 }}/>
+            ) : (
+              <p style={{ fontSize:12, lineHeight:1.85, color:'#4b5563', background:'#f0fdf4', border:'0.5px solid #bbf7d0', borderRadius:7, padding:'10px 12px' }}>{displayMin.summary}</p>
+            )}
+          </Section>
+
+          {/* Agenda */}
+          {(displayMin.agenda_items?.length > 0 || isEditing) && (
+            <Section title="議題・議論内容">
+              {displayMin.agenda_items?.map((a, i) => (
+                <div key={i} style={{ background:'#f9fafb', border:'0.5px solid #e8e8e8', borderRadius:8, padding:'10px 12px', marginBottom:6 }}>
+                  {isEditing ? (
+                    <>
+                      <input value={editBuf!.agenda_items[i].title} onChange={e => updAgenda(i, 'title', e.target.value)}
+                        style={{ ...inputStyle, fontWeight:500, marginBottom:6 }} placeholder="議題タイトル"/>
+                      <textarea value={editBuf!.agenda_items[i].discussion} onChange={e => updAgenda(i, 'discussion', e.target.value)}
+                        style={{ ...taStyle, minHeight:60 }} placeholder="議論内容"/>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize:12, fontWeight:600, marginBottom:4 }}>{i+1}. {a.title}</div>
+                      <div style={{ fontSize:12, color:'#6b7280', lineHeight:1.75, whiteSpace:'pre-wrap' }}>{a.discussion}</div>
+                    </>
+                  )}
+                </div>
+              ))}
+              {isEditing && (
+                <button onClick={() => updEdit('agenda_items', [...(editBuf?.agenda_items||[]), { title:'', discussion:'' }])}
+                  style={addBtnStyle}>+ 議題を追加</button>
+              )}
+            </Section>
+          )}
+
+          {/* Decisions */}
+          {(displayMin.decisions?.length > 0 || isEditing) && (
+            <Section title="決定事項">
+              {displayMin.decisions?.map((d, i) => (
+                <div key={i} style={{ display:'flex', gap:6, marginBottom:5, alignItems:'flex-start' }}>
+                  {isEditing ? (
+                    <>
+                      <textarea value={editBuf!.decisions[i]} onChange={e => updDecision(i, e.target.value)}
+                        style={{ ...taStyle, minHeight:40, flex:1 }}/>
+                      <button onClick={() => updEdit('decisions', (editBuf?.decisions||[]).filter((_,j)=>j!==i))}
+                        style={delBtnStyle}>✕</button>
+                    </>
+                  ) : (
+                    <div style={{ fontSize:12, padding:'6px 10px', borderLeft:'2px solid #93c5fd', background:'#eff6ff', flex:1, lineHeight:1.7 }}>・{d}</div>
+                  )}
+                </div>
+              ))}
+              {isEditing && (
+                <button onClick={() => updEdit('decisions', [...(editBuf?.decisions||[]), ''])}
+                  style={addBtnStyle}>+ 決定事項を追加</button>
+              )}
+            </Section>
+          )}
+
+          {/* Unresolved */}
+          {((displayMin.unresolved_items?.length ?? 0) > 0 || isEditing) && (
+            <Section title="未決事項・検討事項">
+              {displayMin.unresolved_items?.map((u, i) => (
+                <div key={i} style={{ display:'flex', gap:6, marginBottom:5, alignItems:'flex-start' }}>
+                  {isEditing ? (
+                    <>
+                      <textarea value={editBuf!.unresolved_items?.[i] ?? ''} onChange={e => updUnresolved(i, e.target.value)}
+                        style={{ ...taStyle, minHeight:40, flex:1 }}/>
+                      <button onClick={() => updEdit('unresolved_items', (editBuf?.unresolved_items||[]).filter((_,j)=>j!==i))}
+                        style={delBtnStyle}>✕</button>
+                    </>
+                  ) : (
+                    <div style={{ fontSize:12, padding:'6px 10px', borderLeft:'2px solid #fde68a', background:'#fffbeb', flex:1, lineHeight:1.7 }}>・{u}</div>
+                  )}
+                </div>
+              ))}
+              {isEditing && (
+                <button onClick={() => updEdit('unresolved_items', [...(editBuf?.unresolved_items||[]), ''])}
+                  style={addBtnStyle}>+ 未決事項を追加</button>
+              )}
+            </Section>
+          )}
+
+          {/* TODOs */}
+          {(displayMin.todos?.length > 0 || isEditing) && (
+            <Section title="TODO・アクションアイテム">
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                <thead>
+                  <tr>{['タスク内容', '担当者', '期限'].map(h => (
+                    <th key={h} style={{ background:'#1a56db', color:'white', padding:'7px 10px', textAlign:'left', fontWeight:500 }}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {displayMin.todos?.map((t, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
+                      {isEditing ? (
+                        <>
+                          {(['task', 'assignee', 'deadline'] as const).map(f => (
+                            <td key={f} style={tdStyle}>
+                              <input value={(editBuf?.todos[i] as any)[f]} onChange={e => updTodo(i, f, e.target.value)}
+                                style={{ ...inputStyle, padding:'4px 6px' }} placeholder={f === 'deadline' ? '例: 5/15' : ''}/>
+                            </td>
+                          ))}
+                        </>
+                      ) : (
+                        <>
+                          <td style={tdStyle}>{t.task}</td>
+                          <td style={tdStyle}>{t.assignee}</td>
+                          <td style={tdStyle}>{t.deadline || '—'}</td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {isEditing && (
+                <button onClick={() => updEdit('todos', [...(editBuf?.todos||[]), { task:'', assignee:'', deadline:'' }])}
+                  style={{ ...addBtnStyle, marginTop:6 }}>+ 行を追加</button>
+              )}
+            </Section>
+          )}
+
+          {/* Next meeting */}
+          {(displayMin.next_meeting || isEditing) && (
+            <Section title="次回会議">
+              {isEditing ? (
+                <input value={editBuf?.next_meeting || ''} onChange={e => updEdit('next_meeting', e.target.value)}
+                  style={inputStyle} placeholder="例: 6月10日 15:00〜 会議室A"/>
+              ) : (
+                <p style={{ fontSize:12, color:'#4b5563', background:'#f0fdf4', border:'0.5px solid #bbf7d0', borderRadius:7, padding:'9px 12px' }}>{displayMin.next_meeting}</p>
+              )}
+            </Section>
+          )}
+        </div>
+
+        {/* Action bar */}
+        <div style={{ padding:'13px 18px', borderTop:'0.5px solid #e8e8e8', background:'#f9fafb', display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+          <p style={{ fontSize:11, color:'#9ca3af' }}>Word出力後も編集・再出力できます</p>
+          <div style={{ display:'flex', gap:8 }}>
+            <Btn onClick={() => { resetToIdle(); setBlobUrl('') }}>最初から</Btn>
+            <Btn accent onClick={downloadDocx}>Word (.docx) 出力</Btn>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderRegenerateSection() {
+    if (phase !== 'preview') return null
+
+    return (
+      <div style={{ marginTop:10, background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, padding:'16px 18px' }}>
+        <label style={{ display:'block', fontSize:12, fontWeight:500, color:'#374151', marginBottom:8 }}>
+          追加指示（任意）
+        </label>
+        <textarea
+          value={additionalInstruction}
+          onChange={e => setAdditionalInstruction(e.target.value)}
+          placeholder="例：もっと詳しく／決定事項だけまとめて／カンファレンス形式に変えて"
+          rows={3}
+          style={{ ...taStyle, marginBottom:10 }}
+          disabled={isRegenerating}
+        />
+        {regenErr && (
+          <div style={{ ...errBoxStyle, marginBottom:10 }}>再生成に失敗しました: {regenErr}</div>
+        )}
+        <div style={{ display:'flex', justifyContent:'flex-end', alignItems:'center', gap:12 }}>
+          {isRegenerating && (
+            <span style={{ fontSize:11, color:'#6b7280', display:'flex', alignItems:'center', gap:6 }}>
+              <span style={{ width:12, height:12, borderRadius:'50%', border:'1.5px solid #e5e7eb', borderTopColor:'#1a56db', display:'inline-block', animation:'spin .7s linear infinite' }}/>
+              再生成中…
+            </span>
+          )}
+          <button
+            onClick={regenerate}
+            disabled={isRegenerating}
+            style={{
+              padding:'9px 20px', borderRadius:8, border:'none',
+              fontFamily:'inherit', fontSize:12, fontWeight:500,
+              background: isRegenerating ? '#9ca3af' : '#1a56db',
+              color:'white', cursor: isRegenerating ? 'not-allowed' : 'pointer',
+              transition:'background .15s',
+            }}
+          >
+            再生成
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <>
@@ -1236,6 +1486,27 @@ export default function App() {
             </div>
           )}
         </Card>
+
+        {/* ── Meeting Info Card ── */}
+        <MeetingInfoCard info={info} setField={setField} />
+
+        {/* ── Inferred attendees banner ── */}
+        {inferredAtt && (
+          <div style={{ background:'#fffbeb', border:'0.5px solid #fcd34d', borderRadius:9, padding:'10px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:10, gap:10 }}>
+            <span style={{ fontSize:11, color:'#92400e' }}>文字起こしから推測: <strong>{inferredAtt}</strong></span>
+            <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+              <button onClick={() => { setInfo(p => ({ ...p, att: inferredAtt })); setInferredAtt('') }}
+                style={{ fontSize:11, background:'#f59e0b', color:'white', border:'none', borderRadius:5, padding:'4px 10px', cursor:'pointer', fontWeight:500 }}>
+                出席者に反映
+              </button>
+              <button onClick={() => setInferredAtt('')} style={{ fontSize:11, color:'#92400e', background:'none', border:'none', cursor:'pointer' }}>✕</button>
+            </div>
+          </div>
+        )}
+
+        {renderPreviewCard()}
+
+        {renderRegenerateSection()}
 
         {/* ── ライブ校正セクション ── */}
         {(phase === 'recording' || liveBlocks.length > 0) && (
@@ -1406,266 +1677,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Inferred attendees banner ── */}
-        {inferredAtt && (
-          <div style={{ background:'#fffbeb', border:'0.5px solid #fcd34d', borderRadius:9, padding:'10px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:10, gap:10 }}>
-            <span style={{ fontSize:11, color:'#92400e' }}>文字起こしから推測: <strong>{inferredAtt}</strong></span>
-            <div style={{ display:'flex', gap:6, flexShrink:0 }}>
-              <button onClick={() => { setInfo(p => ({ ...p, att: inferredAtt })); setInferredAtt('') }}
-                style={{ fontSize:11, background:'#f59e0b', color:'white', border:'none', borderRadius:5, padding:'4px 10px', cursor:'pointer', fontWeight:500 }}>
-                出席者に反映
-              </button>
-              <button onClick={() => setInferredAtt('')} style={{ fontSize:11, color:'#92400e', background:'none', border:'none', cursor:'pointer' }}>✕</button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Meeting Info Card ── */}
-        <MeetingInfoCard info={info} setField={setField} />
-
-        {/* ── Preview Card ── */}
-        {phase === 'preview' && displayMin && (
-          <div style={{ background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, overflow:'hidden', marginTop:10 }}>
-
-            {/* Tabs */}
-            <div style={{ display:'flex', borderBottom:'0.5px solid #e8e8e8' }}>
-              {(['detailed', 'summary'] as const).map(tab => (
-                <button
-                  key={tab}
-                  onClick={() => { setActiveTab(tab); setIsEditing(false); setEditBuf(null) }}
-                  style={{
-                    padding: '10px 24px',
-                    fontSize: 12,
-                    fontWeight: activeTab === tab ? 600 : 400,
-                    color: activeTab === tab ? '#1a56db' : '#6b7280',
-                    background: 'none',
-                    border: 'none',
-                    borderBottom: activeTab === tab ? '2px solid #1a56db' : '2px solid transparent',
-                    cursor: 'pointer',
-                    fontFamily: 'inherit',
-                    transition: 'color .15s',
-                  }}
-                >
-                  {tab === 'detailed' ? '詳細版' : '要約版'}
-                </button>
-              ))}
-              <div style={{ flex:1, borderBottom:'2px solid transparent' }}/>
-            </div>
-
-            {/* Preview header */}
-            <div style={{ padding:'12px 18px', borderBottom:'0.5px solid #e8e8e8', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              <span style={{ fontSize:13, fontWeight:500, color:'#374151' }}>
-                議事録プレビュー
-                <span style={{ fontSize:11, color:'#9ca3af', marginLeft:6 }}>
-                  ({activeTab === 'detailed' ? '詳細版' : '要約版'})
-                </span>
-              </span>
-              {!isEditing ? (
-                <button onClick={startEdit} style={{ fontSize:12, color:'#1a56db', background:'none', border:'none', cursor:'pointer' }}>
-                  ✏️ 編集する
-                </button>
-              ) : (
-                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-                  <button onClick={cancelEdit} style={{ fontSize:12, color:'#6b7280', background:'none', border:'none', cursor:'pointer' }}>
-                    キャンセル
-                  </button>
-                  <button onClick={saveEdit} style={{ fontSize:12, color:'white', background:'#1a56db', border:'none', borderRadius:6, padding:'5px 14px', cursor:'pointer', fontWeight:500 }}>
-                    ✓ 保存
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Minutes body */}
-            <div style={{ padding:'18px' }}>
-              {/* Summary */}
-              <Section title="会議の概要">
-                {isEditing ? (
-                  <textarea value={editBuf?.summary || ''} onChange={e => updEdit('summary', e.target.value)}
-                    style={{ ...taStyle, minHeight:80 }}/>
-                ) : (
-                  <p style={{ fontSize:12, lineHeight:1.85, color:'#4b5563', background:'#f0fdf4', border:'0.5px solid #bbf7d0', borderRadius:7, padding:'10px 12px' }}>{displayMin.summary}</p>
-                )}
-              </Section>
-
-              {/* Agenda */}
-              {(displayMin.agenda_items?.length > 0 || isEditing) && (
-                <Section title="議題・議論内容">
-                  {displayMin.agenda_items?.map((a, i) => (
-                    <div key={i} style={{ background:'#f9fafb', border:'0.5px solid #e8e8e8', borderRadius:8, padding:'10px 12px', marginBottom:6 }}>
-                      {isEditing ? (
-                        <>
-                          <input value={editBuf!.agenda_items[i].title} onChange={e => updAgenda(i, 'title', e.target.value)}
-                            style={{ ...inputStyle, fontWeight:500, marginBottom:6 }} placeholder="議題タイトル"/>
-                          <textarea value={editBuf!.agenda_items[i].discussion} onChange={e => updAgenda(i, 'discussion', e.target.value)}
-                            style={{ ...taStyle, minHeight:60 }} placeholder="議論内容"/>
-                        </>
-                      ) : (
-                        <>
-                          <div style={{ fontSize:12, fontWeight:600, marginBottom:4 }}>{i+1}. {a.title}</div>
-                          <div style={{ fontSize:12, color:'#6b7280', lineHeight:1.75, whiteSpace:'pre-wrap' }}>{a.discussion}</div>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                  {isEditing && (
-                    <button onClick={() => updEdit('agenda_items', [...(editBuf?.agenda_items||[]), { title:'', discussion:'' }])}
-                      style={addBtnStyle}>+ 議題を追加</button>
-                  )}
-                </Section>
-              )}
-
-              {/* Decisions */}
-              {(displayMin.decisions?.length > 0 || isEditing) && (
-                <Section title="決定事項">
-                  {displayMin.decisions?.map((d, i) => (
-                    <div key={i} style={{ display:'flex', gap:6, marginBottom:5, alignItems:'flex-start' }}>
-                      {isEditing ? (
-                        <>
-                          <textarea value={editBuf!.decisions[i]} onChange={e => updDecision(i, e.target.value)}
-                            style={{ ...taStyle, minHeight:40, flex:1 }}/>
-                          <button onClick={() => updEdit('decisions', (editBuf?.decisions||[]).filter((_,j)=>j!==i))}
-                            style={delBtnStyle}>✕</button>
-                        </>
-                      ) : (
-                        <div style={{ fontSize:12, padding:'6px 10px', borderLeft:'2px solid #93c5fd', background:'#eff6ff', flex:1, lineHeight:1.7 }}>・{d}</div>
-                      )}
-                    </div>
-                  ))}
-                  {isEditing && (
-                    <button onClick={() => updEdit('decisions', [...(editBuf?.decisions||[]), ''])}
-                      style={addBtnStyle}>+ 決定事項を追加</button>
-                  )}
-                </Section>
-              )}
-
-              {/* Unresolved */}
-              {((displayMin.unresolved_items?.length ?? 0) > 0 || isEditing) && (
-                <Section title="未決事項・検討事項">
-                  {displayMin.unresolved_items?.map((u, i) => (
-                    <div key={i} style={{ display:'flex', gap:6, marginBottom:5, alignItems:'flex-start' }}>
-                      {isEditing ? (
-                        <>
-                          <textarea value={editBuf!.unresolved_items?.[i] ?? ''} onChange={e => updUnresolved(i, e.target.value)}
-                            style={{ ...taStyle, minHeight:40, flex:1 }}/>
-                          <button onClick={() => updEdit('unresolved_items', (editBuf?.unresolved_items||[]).filter((_,j)=>j!==i))}
-                            style={delBtnStyle}>✕</button>
-                        </>
-                      ) : (
-                        <div style={{ fontSize:12, padding:'6px 10px', borderLeft:'2px solid #fde68a', background:'#fffbeb', flex:1, lineHeight:1.7 }}>・{u}</div>
-                      )}
-                    </div>
-                  ))}
-                  {isEditing && (
-                    <button onClick={() => updEdit('unresolved_items', [...(editBuf?.unresolved_items||[]), ''])}
-                      style={addBtnStyle}>+ 未決事項を追加</button>
-                  )}
-                </Section>
-              )}
-
-              {/* TODOs */}
-              {(displayMin.todos?.length > 0 || isEditing) && (
-                <Section title="TODO・アクションアイテム">
-                  <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
-                    <thead>
-                      <tr>{['タスク内容', '担当者', '期限'].map(h => (
-                        <th key={h} style={{ background:'#1a56db', color:'white', padding:'7px 10px', textAlign:'left', fontWeight:500 }}>{h}</th>
-                      ))}</tr>
-                    </thead>
-                    <tbody>
-                      {displayMin.todos?.map((t, i) => (
-                        <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafb' }}>
-                          {isEditing ? (
-                            <>
-                              {(['task', 'assignee', 'deadline'] as const).map(f => (
-                                <td key={f} style={tdStyle}>
-                                  <input value={(editBuf?.todos[i] as any)[f]} onChange={e => updTodo(i, f, e.target.value)}
-                                    style={{ ...inputStyle, padding:'4px 6px' }} placeholder={f === 'deadline' ? '例: 5/15' : ''}/>
-                                </td>
-                              ))}
-                            </>
-                          ) : (
-                            <>
-                              <td style={tdStyle}>{t.task}</td>
-                              <td style={tdStyle}>{t.assignee}</td>
-                              <td style={tdStyle}>{t.deadline || '—'}</td>
-                            </>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {isEditing && (
-                    <button onClick={() => updEdit('todos', [...(editBuf?.todos||[]), { task:'', assignee:'', deadline:'' }])}
-                      style={{ ...addBtnStyle, marginTop:6 }}>+ 行を追加</button>
-                  )}
-                </Section>
-              )}
-
-              {/* Next meeting */}
-              {(displayMin.next_meeting || isEditing) && (
-                <Section title="次回会議">
-                  {isEditing ? (
-                    <input value={editBuf?.next_meeting || ''} onChange={e => updEdit('next_meeting', e.target.value)}
-                      style={inputStyle} placeholder="例: 6月10日 15:00〜 会議室A"/>
-                  ) : (
-                    <p style={{ fontSize:12, color:'#4b5563', background:'#f0fdf4', border:'0.5px solid #bbf7d0', borderRadius:7, padding:'9px 12px' }}>{displayMin.next_meeting}</p>
-                  )}
-                </Section>
-              )}
-            </div>
-
-            {/* Action bar */}
-            <div style={{ padding:'13px 18px', borderTop:'0.5px solid #e8e8e8', background:'#f9fafb', display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-              <p style={{ fontSize:11, color:'#9ca3af' }}>Word出力後も編集・再出力できます</p>
-              <div style={{ display:'flex', gap:8 }}>
-                <Btn onClick={() => { resetToIdle(); setBlobUrl('') }}>最初から</Btn>
-                <Btn accent onClick={downloadDocx}>Word (.docx) 出力</Btn>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Regenerate section ── */}
-        {phase === 'preview' && (
-          <div style={{ marginTop:10, background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, padding:'16px 18px' }}>
-            <label style={{ display:'block', fontSize:12, fontWeight:500, color:'#374151', marginBottom:8 }}>
-              追加指示（任意）
-            </label>
-            <textarea
-              value={additionalInstruction}
-              onChange={e => setAdditionalInstruction(e.target.value)}
-              placeholder="例：もっと詳しく／決定事項だけまとめて／カンファレンス形式に変えて"
-              rows={3}
-              style={{ ...taStyle, marginBottom:10 }}
-              disabled={isRegenerating}
-            />
-            {regenErr && (
-              <div style={{ ...errBoxStyle, marginBottom:10 }}>再生成に失敗しました: {regenErr}</div>
-            )}
-            <div style={{ display:'flex', justifyContent:'flex-end', alignItems:'center', gap:12 }}>
-              {isRegenerating && (
-                <span style={{ fontSize:11, color:'#6b7280', display:'flex', alignItems:'center', gap:6 }}>
-                  <span style={{ width:12, height:12, borderRadius:'50%', border:'1.5px solid #e5e7eb', borderTopColor:'#1a56db', display:'inline-block', animation:'spin .7s linear infinite' }}/>
-                  再生成中…
-                </span>
-              )}
-              <button
-                onClick={regenerate}
-                disabled={isRegenerating}
-                style={{
-                  padding:'9px 20px', borderRadius:8, border:'none',
-                  fontFamily:'inherit', fontSize:12, fontWeight:500,
-                  background: isRegenerating ? '#9ca3af' : '#1a56db',
-                  color:'white', cursor: isRegenerating ? 'not-allowed' : 'pointer',
-                  transition:'background .15s',
-                }}
-              >
-                再生成
-              </button>
-            </div>
-          </div>
-        )}
+        {renderRegenerateSection()}
 
         {/* ── Debug sections ── */}
         {isDebug && dbgTranscript && (
