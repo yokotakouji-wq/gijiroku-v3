@@ -115,6 +115,8 @@ function getMimeType() {
 // バックエンド maxDuration(300s) より少し長めに設定して、サーバー側を先に失敗させる
 const FETCH_TIMEOUT_MS = 330_000
 
+const DRAFT_VERSION = 1
+
 async function fetchWithTimeout(url: string, opts: RequestInit): Promise<Response> {
   const controller = new AbortController()
   const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
@@ -155,6 +157,11 @@ export default function App() {
   const [regenErr, setRegenErr] = useState('')
   const [prevDetailed, setPrevDetailed] = useState<Minutes | null>(null)
   const [prevSummary, setPrevSummary]   = useState<Minutes | null>(null)
+
+  // ── Draft save/load state ───────────────────────────────────────────────
+  const [draftMsg, setDraftMsg] = useState('')
+  const [draftErr, setDraftErr] = useState('')
+  const [draftDragOver, setDraftDragOver] = useState(false)
 
   // ── Mock / WS error state ───────────────────────────────────────────────
   const [mockMode, setMockMode] = useState(false)
@@ -204,6 +211,7 @@ export default function App() {
   const blockScrollRef = useRef<HTMLDivElement>(null)
   const blockIdRef     = useRef(0)
   const liveBlocksRef  = useRef<Block[]>([])
+  const draftFileRef   = useRef<HTMLInputElement>(null)
 
   liveIntervalRef.current  = liveInterval
   atBottomRef.current      = atBottom
@@ -1072,6 +1080,84 @@ export default function App() {
     setMemoOpen({})
   }
 
+  // ── Draft save/load ─────────────────────────────────────────────────────
+  function saveDraft() {
+    if (!detailedMinutes && !summaryMinutes) return
+    const now = new Date()
+    const p2 = (n: number) => String(n).padStart(2, '0')
+    const dateStr = `${now.getFullYear()}${p2(now.getMonth()+1)}${p2(now.getDate())}_${p2(now.getHours())}${p2(now.getMinutes())}`
+    const san = (s: string) => s.replace(/[/\\:*?"<>|\n\r]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 30)
+    const fileName = info.name
+      ? `議事録下書き_${san(info.name)}_${dateStr}.json`
+      : `議事録下書き_${dateStr}.json`
+
+    const draft = {
+      version: DRAFT_VERSION,
+      savedAt: now.toISOString(),
+      info,
+      transcript: dbgTranscript,
+      liveBlocks,
+      detailedMinutes,
+      summaryMinutes,
+      activeTab,
+    }
+
+    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    a.click()
+    URL.revokeObjectURL(url)
+    setDraftMsg('下書きを保存しました。別の日に開いてWordを作成できます。')
+    setTimeout(() => setDraftMsg(''), 5000)
+  }
+
+  function processDraftFile(file: File) {
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      try {
+        const draft = JSON.parse(ev.target?.result as string)
+        if (!draft || typeof draft !== 'object') throw new Error()
+        if (draft.version !== DRAFT_VERSION) throw new Error()
+        if (!draft.info || typeof draft.info !== 'object') throw new Error()
+        if (!draft.detailedMinutes && !draft.summaryMinutes) throw new Error()
+        setInfo(draft.info)
+        setDbgTranscript(typeof draft.transcript === 'string' ? draft.transcript : '')
+        setLiveBlocks(Array.isArray(draft.liveBlocks) ? draft.liveBlocks : [])
+        setDetailedMinutes(draft.detailedMinutes ?? null)
+        setSummaryMinutes(draft.summaryMinutes ?? null)
+        setActiveTab(draft.activeTab === 'summary' ? 'summary' : 'detailed')
+        setIsEditing(false)
+        setEditBuf(null)
+        setErrMsg('')
+        setPhase('preview')
+        setDraftErr('')
+        setDraftMsg('下書きを読み込みました。内容を確認して編集できます。')
+        setTimeout(() => setDraftMsg(''), 5000)
+      } catch {
+        setDraftErr('下書きファイルを読み込めませんでした。ファイルの形式を確認してください。')
+        setTimeout(() => setDraftErr(''), 5000)
+      }
+    }
+    reader.readAsText(file)
+  }
+
+  function loadDraftFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    processDraftFile(file)
+  }
+
+  function handleDraftDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setDraftDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    if (!file) return
+    processDraftFile(file)
+  }
+
   function renderPreviewCard() {
     if (phase !== 'preview' || !displayMin) return null
 
@@ -1269,8 +1355,9 @@ export default function App() {
         {/* Action bar */}
         <div style={{ padding:'13px 18px', borderTop:'0.5px solid #e8e8e8', background:'#f9fafb', display:'flex', justifyContent:'space-between', alignItems:'center', gap:10, flexWrap:'wrap' }}>
           <p style={{ fontSize:11, color:'#9ca3af' }}>Word出力後も編集・再出力できます</p>
-          <div style={{ display:'flex', gap:8 }}>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
             <Btn onClick={() => { resetToIdle(); setBlobUrl('') }}>最初から</Btn>
+            <Btn onClick={saveDraft}>下書きを保存</Btn>
             <Btn accent onClick={downloadDocx}>Word (.docx) 出力</Btn>
           </div>
         </div>
@@ -1371,6 +1458,20 @@ export default function App() {
           </strong>
           固有名詞・数値・決定事項はAIが聞き間違える場合があります。出力後に担当者が内容を確認・修正してから提出してください。録音データおよび議事録は施設内での業務利用に限ります。
         </div>
+
+        {/* ── Draft messages ── */}
+        {draftMsg && (
+          <div style={{ background:'#f0fdf4', border:'0.5px solid #86efac', borderRadius:9, padding:'10px 14px', marginBottom:10, fontSize:12, color:'#166534', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <span>{draftMsg}</span>
+            <button onClick={() => setDraftMsg('')} style={{ background:'none', border:'none', color:'#166534', cursor:'pointer', padding:'0 0 0 10px', fontSize:14 }}>✕</button>
+          </div>
+        )}
+        {draftErr && (
+          <div style={{ background:'#fef2f2', border:'0.5px solid #fca5a5', borderRadius:9, padding:'10px 14px', marginBottom:10, fontSize:12, color:'#991b1b', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <span>{draftErr}</span>
+            <button onClick={() => setDraftErr('')} style={{ background:'none', border:'none', color:'#991b1b', cursor:'pointer', padding:'0 0 0 10px', fontSize:14 }}>✕</button>
+          </div>
+        )}
 
         {/* ── Recording Card ── */}
         <Card>
@@ -1489,6 +1590,49 @@ export default function App() {
 
         {/* ── Meeting Info Card ── */}
         <MeetingInfoCard info={info} setField={setField} />
+
+        {/* ── Draft resume card (idle only) ── */}
+        {phase === 'idle' && (
+          <div
+            onDragOver={e => { e.preventDefault(); setDraftDragOver(true) }}
+            onDragLeave={() => setDraftDragOver(false)}
+            onDrop={handleDraftDrop}
+            style={{
+              marginTop: 10,
+              background: draftDragOver ? '#eff6ff' : '#fff',
+              border: `${draftDragOver ? '1.5px dashed #3b82f6' : '0.5px solid #e8e8e8'}`,
+              borderRadius: 12,
+              padding: '18px 20px',
+              transition: 'background 0.15s, border 0.15s',
+            }}
+          >
+            <div style={{ fontSize:12, fontWeight:600, color:'#374151', marginBottom:12 }}>下書きから再開</div>
+            <div style={{
+              border: `${draftDragOver ? '1.5px dashed #3b82f6' : '1px dashed #d1d5db'}`,
+              borderRadius: 8,
+              padding: '20px 16px',
+              textAlign: 'center',
+              background: draftDragOver ? '#dbeafe' : '#f9fafb',
+              transition: 'background 0.15s, border 0.15s',
+              marginBottom: 12,
+            }}>
+              <p style={{ fontSize:12, color: draftDragOver ? '#1d4ed8' : '#6b7280', marginBottom:4 }}>
+                保存した下書きファイルをここにドラッグ＆ドロップしてください。
+              </p>
+              <p style={{ fontSize:11, color:'#9ca3af' }}>
+                または「下書きを開く」からファイルを選択できます。
+              </p>
+            </div>
+            <div style={{ display:'flex', justifyContent:'center' }}>
+              <button
+                onClick={() => draftFileRef.current?.click()}
+                style={{ fontSize:12, color:'#374151', background:'transparent', border:'0.5px solid #d1d5db', borderRadius:7, padding:'7px 20px', cursor:'pointer', fontFamily:'inherit', fontWeight:500 }}
+              >
+                下書きを開く
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Inferred attendees banner ── */}
         {inferredAtt && (
@@ -1688,6 +1832,15 @@ export default function App() {
         )}
 
       </main>
+
+      {/* ── Hidden file input for draft load ── */}
+      <input
+        ref={draftFileRef}
+        type="file"
+        accept=".json"
+        style={{ display:'none' }}
+        onChange={loadDraftFile}
+      />
     </>
   )
 }
