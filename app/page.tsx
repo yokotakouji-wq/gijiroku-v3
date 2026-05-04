@@ -146,7 +146,6 @@ export default function App() {
   const [blobUrl, setBlobUrl]   = useState('')
   const [inferredAtt, setInferredAtt] = useState('')
   const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null)
-  const [isPaused, setIsPaused] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   // debug
   const [dbgTranscript, setDbgTranscript]   = useState('')
@@ -174,8 +173,6 @@ export default function App() {
   const [liveBufStart, setLiveBufStart] = useState(0)
   const [liveInterval, setLiveInterval] = useState(120)
   const [wsConnected, setWsConnected] = useState(false)
-  const [atBottom, setAtBottom]     = useState(true)
-  const [newBlockCount, setNewBlockCount] = useState(0)
   const [memoOpen, setMemoOpen]     = useState<Record<string, boolean>>({})
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null)
   const [timerKey, setTimerKey]     = useState(0)
@@ -185,8 +182,6 @@ export default function App() {
   const chunksRef    = useRef<Blob[]>([])
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null)
   const startWall    = useRef(0)
-  const pausedMsRef  = useRef(0)
-  const pauseStartRef = useRef(0)
   const lastBlobRef  = useRef<{ blob: Blob; mimeType: string } | null>(null)
 
   // ── Chunk recording refs ────────────────────────────────────────────────
@@ -207,25 +202,125 @@ export default function App() {
   const liveBufRef     = useRef('')
   const liveBufStartRef = useRef(0)
   const liveIntervalRef = useRef(120)
-  const atBottomRef    = useRef(true)
-  const blockScrollRef = useRef<HTMLDivElement>(null)
-  const blockIdRef     = useRef(0)
-  const liveBlocksRef  = useRef<Block[]>([])
-  const draftFileRef   = useRef<HTMLInputElement>(null)
+  const liveEndSentinelRef  = useRef<HTMLDivElement>(null)
+  const recordingBarRef     = useRef<HTMLDivElement>(null)
+  const blockIdRef          = useRef(0)
+  const liveBlocksRef       = useRef<Block[]>([])
+  const draftFileRef        = useRef<HTMLInputElement>(null)
+  const liveScrollAtRef     = useRef(0)
+  const liveScrollTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const liveHadTextRef      = useRef(false)
+  const lastFocusBlurRef    = useRef(0)      // 入力要素からblurした時刻(ms)
+  const autoFollowPausedRef = useRef(false)  // 手動スクロール後、自動追従を停止するフラグ
 
   liveIntervalRef.current  = liveInterval
-  atBottomRef.current      = atBottom
   liveBlocksRef.current    = liveBlocks
 
   const setField = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setInfo(p => ({ ...p, [k]: e.target.value }))
 
-  useEffect(() => {
-    if (phase === 'recording') {
-      setIsPaused(false)
-      pausedMsRef.current = 0
+  function isFocusedOnInput(): boolean {
+    const el = document.activeElement
+    if (!el || el === document.body) return false
+    const tag = el.tagName.toLowerCase()
+    return tag === 'input' || tag === 'textarea' || tag === 'select'
+      || (el as HTMLElement).isContentEditable
+  }
+
+  function fixedBottomOffset() {
+    return phase === 'recording' ? (recordingBarRef.current?.offsetHeight ?? 0) : 0
+  }
+
+  function scrollLiveTranscriptToLatest(smooth = true) {
+    if (isFocusedOnInput() || Date.now() - lastFocusBlurRef.current < 1500) return
+    if (autoFollowPausedRef.current) return
+    const sentinel = liveEndSentinelRef.current
+    if (!sentinel) return
+    const rect = sentinel.getBoundingClientRect()
+    const absoluteY = window.scrollY + rect.top
+    const anchorY = window.innerHeight * 0.70 - fixedBottomOffset()
+    const targetY = Math.max(0, absoluteY - anchorY)
+    window.scrollTo({ top: targetY, behavior: smooth ? 'smooth' : 'auto' })
+  }
+
+  function scrollLiveTranscriptAfterPaint() {
+    if (liveScrollTimerRef.current) {
+      clearTimeout(liveScrollTimerRef.current)
+      liveScrollTimerRef.current = null
     }
-  }, [phase])
+    liveScrollAtRef.current = Date.now()
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => scrollLiveTranscriptToLatest(true))
+    })
+    setTimeout(() => scrollLiveTranscriptToLatest(true), 80)
+  }
+
+  function scheduleLiveTranscriptScroll() {
+    if (liveScrollTimerRef.current) return
+    const now = Date.now()
+    const wait = Math.max(0, 600 - (now - liveScrollAtRef.current))
+    liveScrollTimerRef.current = setTimeout(() => {
+      liveScrollTimerRef.current = null
+      liveScrollAtRef.current = Date.now()
+      scrollLiveTranscriptToLatest(true)
+    }, wait)
+  }
+
+  // 入力要素からblurした時刻を記録（自動スクロール抑制用）
+  useEffect(() => {
+    function onFocusableBlur(e: FocusEvent) {
+      const el = e.target as HTMLElement
+      if (!el) return
+      const tag = el.tagName.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable) {
+        lastFocusBlurRef.current = Date.now()
+      }
+    }
+    document.addEventListener('blur', onFocusableBlur, true)
+    return () => document.removeEventListener('blur', onFocusableBlur, true)
+  }, [])
+
+  // 手動スクロール検出 — ユーザーがスクロールしたら自動追従をオフ（「ライブ文字起こしに戻る」で再開）
+  useEffect(() => {
+    function pauseAutoFollow() {
+      autoFollowPausedRef.current = true
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (isFocusedOnInput()) return  // 入力フォーカス中は対象外
+      const keys = ['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', ' ', 'Home', 'End']
+      if (keys.includes(e.key)) pauseAutoFollow()
+    }
+    window.addEventListener('wheel',     pauseAutoFollow, { passive: true })
+    window.addEventListener('touchmove', pauseAutoFollow, { passive: true })
+    window.addEventListener('keydown',   onKeyDown)
+    return () => {
+      window.removeEventListener('wheel',     pauseAutoFollow)
+      window.removeEventListener('touchmove', pauseAutoFollow)
+      window.removeEventListener('keydown',   onKeyDown)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (phase !== 'recording') {
+      liveHadTextRef.current = false
+      return
+    }
+    const hasLiveText = !!(liveBuf || liveInterim)
+    if (hasLiveText && !liveHadTextRef.current) {
+      liveHadTextRef.current = true
+      scrollLiveTranscriptAfterPaint()
+      return
+    }
+    liveHadTextRef.current = hasLiveText
+    scheduleLiveTranscriptScroll()
+    return () => {
+      if (liveScrollTimerRef.current) {
+        clearTimeout(liveScrollTimerRef.current)
+        liveScrollTimerRef.current = null
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, liveBlocks.length, liveBuf, liveInterim])
 
   // ── Gemini整文（seal時・再試行時の共通処理）───────────────────────────────
   const formatBlock = useCallback((id: string, text: string, contextText?: string) => {
@@ -264,7 +359,7 @@ export default function App() {
     prevBlockTextRef.current = t
 
     const id = `b${++blockIdRef.current}`
-    const endSec = Math.floor((Date.now() - startWall.current - pausedMsRef.current) / 1000)
+    const endSec = Math.floor((Date.now() - startWall.current) / 1000)
     const block: Block = {
       id,
       start:     liveBufStartRef.current,
@@ -283,18 +378,14 @@ export default function App() {
     setLiveInterim('')
     setLiveBufStart(endSec)
     setLiveBlocks(prev => [...prev, block])
-    if (!atBottomRef.current) {
-      setNewBlockCount(n => n + 1)
-    } else {
-      setTimeout(() => blockScrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' }), 60)
-    }
+    // Page-level live transcript scrolling is handled after React commits the new content.
 
     formatBlock(id, t, contextText || undefined)
   }, [formatBlock])
 
   // ── Block interval timer ─────────────────────────────────────────────────
   useEffect(() => {
-    if (phase !== 'recording' || isPaused) {
+    if (phase !== 'recording') {
       if (blockTimerRef.current) { clearInterval(blockTimerRef.current); blockTimerRef.current = null }
       return
     }
@@ -302,34 +393,7 @@ export default function App() {
     return () => {
       if (blockTimerRef.current) { clearInterval(blockTimerRef.current); blockTimerRef.current = null }
     }
-  }, [phase, liveInterval, timerKey, isPaused, seal])
-
-  // ── Pause / Resume ──────────────────────────────────────────────────────
-  function pauseRecording() {
-    if (mrRef.current?.state === 'recording') {
-      mrRef.current.pause()
-      if (liveMrRef.current?.state === 'recording') liveMrRef.current.pause()
-      if (timerRef.current) clearInterval(timerRef.current)
-      if (mockTimerRef.current) { clearInterval(mockTimerRef.current); mockTimerRef.current = null }
-      pauseStartRef.current = Date.now()
-      setIsPaused(true)
-    }
-  }
-
-  function resumeRecording() {
-    if (mrRef.current?.state === 'paused') {
-      mrRef.current.resume()
-      if (liveMrRef.current?.state === 'paused') liveMrRef.current.resume()
-      pausedMsRef.current += Date.now() - pauseStartRef.current
-      const elapsed = pausedMsRef.current
-      timerRef.current = setInterval(
-        () => setRecSec(Math.floor((Date.now() - startWall.current - elapsed) / 1000)), 500
-      )
-      if (isMockAvailable && mockMode) connectMockTranscription()
-      setTimerKey(k => k + 1)
-      setIsPaused(false)
-    }
-  }
+  }, [phase, liveInterval, timerKey, seal])
 
   // ── Recording ───────────────────────────────────────────────────────────
   async function startRec() {
@@ -338,10 +402,8 @@ export default function App() {
     setLiveBuf('')
     setLiveInterim('')
     setLiveBufStart(0)
-    setNewBlockCount(0)
     setActiveBlockId(null)
     setMemoOpen({})
-    setAtBottom(true)
     setTimerKey(0)
     setWsConnected(false)
     setWsError('')
@@ -349,7 +411,12 @@ export default function App() {
     liveBufRef.current      = ''
     liveBufStartRef.current = 0
     blockIdRef.current      = 0
-    atBottomRef.current     = true
+    liveScrollAtRef.current = 0
+    liveHadTextRef.current  = false
+    if (liveScrollTimerRef.current) {
+      clearTimeout(liveScrollTimerRef.current)
+      liveScrollTimerRef.current = null
+    }
 
     // Reset chunk state
     audioChunksRef.current = []
@@ -1024,10 +1091,9 @@ export default function App() {
   }
 
   function toLatest() {
-    blockScrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' })
-    setNewBlockCount(0)
-    setAtBottom(true)
-    atBottomRef.current = true
+    autoFollowPausedRef.current = false  // 自動追従を再開
+    lastFocusBlurRef.current = 0         // blur後抑制も解除（直前クリックのblurを無視）
+    scrollLiveTranscriptToLatest(true)
   }
 
   function toNextUnchecked() {
@@ -1043,14 +1109,7 @@ export default function App() {
     setTimerKey(k => k + 1)
   }
 
-  function handleBlockScroll() {
-    if (!blockScrollRef.current) return
-    const { scrollTop, scrollHeight, clientHeight } = blockScrollRef.current
-    const ab = scrollHeight - scrollTop - clientHeight < 80
-    setAtBottom(ab)
-    atBottomRef.current = ab
-    if (ab) setNewBlockCount(0)
-  }
+  // Live transcript follow position is controlled by the sentinel at the page-flow tail.
 
   function resetToIdle() {
     setPhase('idle')
@@ -1075,7 +1134,6 @@ export default function App() {
     setLiveBlocks([])
     setLiveBuf('')
     setLiveInterim('')
-    setNewBlockCount(0)
     setActiveBlockId(null)
     setMemoOpen({})
   }
@@ -1414,50 +1472,34 @@ export default function App() {
     <>
       <style>{`
         *{box-sizing:border-box;margin:0;padding:0}
+        body{background:#f1f5f9}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
         input,textarea{font-family:inherit;font-size:13px}
-        input::placeholder,textarea::placeholder{color:#bbb}
+        input::placeholder,textarea::placeholder{color:#b0bec5}
         textarea{resize:vertical;line-height:1.7}
         ::-webkit-scrollbar{width:4px}
         ::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px}
+        .idle-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:18px}
+        @media(max-width:660px){.idle-grid{grid-template-columns:1fr}}
       `}</style>
 
       {/* ── Header ── */}
-      <header style={{ background:'#fff', borderBottom:'0.5px solid #e8e8e8', padding:'13px 18px', display:'flex', alignItems:'center', gap:10, position:'sticky', top:0, zIndex:10 }}>
-        <div style={{ width:30, height:30, borderRadius:7, background:'#e8f0fe', display:'flex', alignItems:'center', justifyContent:'center', color:'#1a56db', flexShrink:0 }}>
-          <svg width="17" height="17" viewBox="0 0 16 16" fill="none">
-            <rect x="2" y="1" width="12" height="14" rx="2" stroke="currentColor" strokeWidth="1.3"/>
-            <line x1="5" y1="5" x2="11" y2="5" stroke="currentColor" strokeWidth="1"/>
-            <line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" strokeWidth="1"/>
-            <line x1="5" y1="11" x2="9" y2="11" stroke="currentColor" strokeWidth="1"/>
-          </svg>
-        </div>
-        <div>
-          <div style={{ fontSize:15, fontWeight:600, letterSpacing:'-0.01em' }}>議事録メーカー</div>
-          <div style={{ fontSize:10, color:'#9ca3af', marginTop:1 }}>録音 → 文字起こし → AI 議事録 → Word</div>
-        </div>
+      <header style={{ background:'#fff', borderBottom:'0.5px solid #e8e8e8', padding:'10px 18px', display:'flex', alignItems:'center', gap:10, position:'sticky', top:0, zIndex:10 }}>
+        <img
+          src="/gijiroku-logo-icon.png"
+          alt="議事録メーカー"
+          style={{ width:42, height:42, objectFit:'contain', display:'block', flexShrink:0 }}
+        />
+        <img
+          src="/gijiroku-logo-wordmark.png"
+          alt="議事録メーカー"
+          style={{ height:32, width:'auto', maxWidth:220, objectFit:'contain', display:'block', flexShrink:0 }}
+        />
         <div style={{ flex:1 }} />
       </header>
 
-      <main style={{ maxWidth:640, margin:'0 auto', padding:'14px 12px 80px' }}>
-
-        {/* ── 注意書きカード ── */}
-        <div style={{
-          background: '#fffbeb',
-          border: '1px solid #fde68a',
-          borderRadius: 10,
-          padding: '14px 18px',
-          marginBottom: 16,
-          fontSize: 13,
-          color: '#92400e',
-          lineHeight: 1.8,
-        }}>
-          <strong style={{ display: 'block', marginBottom: 4, color: '#78350f' }}>
-            ⚠️ AIによる生成物は必ず確認をお願いします。
-          </strong>
-          固有名詞・数値・決定事項はAIが聞き間違える場合があります。出力後に担当者が内容を確認・修正してから提出してください。録音データおよび議事録は施設内での業務利用に限ります。
-        </div>
+      <main style={{ maxWidth: 1040, margin:'0 auto', padding: phase === 'idle' ? '22px 24px 40px' : '22px 32px 28px' }}>
 
         {/* ── Draft messages ── */}
         {draftMsg && (
@@ -1473,57 +1515,103 @@ export default function App() {
           </div>
         )}
 
-        {/* ── Recording Card ── */}
-        <Card>
-          {phase === 'idle' && (
-            <div style={{ display:'flex', flexDirection:'column', alignItems:'center', padding:'36px 20px 28px', gap:14 }}>
-              <button onClick={startRec} style={micBtnStyle(false)}>
-                <MicIcon />
-                <span>録音開始</span>
-              </button>
-              <p style={{ fontSize:12, color:'#9ca3af', textAlign:'center' }}>
-                会議情報は録音前・中・後いつでも入力できます
+        {/* ── Idle: 2-column layout ── */}
+        {phase === 'idle' && (
+          <div className="idle-grid">
+            {/* ── Main card (left) ── */}
+            <div style={{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:26, padding:'36px 38px 32px', display:'flex', flexDirection:'column' }}>
+              {/* Badge */}
+              <div style={{ display:'inline-flex', alignItems:'center', gap:5, background:'#ecfeff', border:'1px solid #cffafe', borderRadius:999, padding:'4px 12px 4px 9px', fontSize:11.5, fontWeight:500, color:'#0e7490', marginBottom:18, width:'fit-content' }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                会議情報は録音の前後いつでも追記できます
+              </div>
+              {/* Title */}
+              <h2 style={{ fontSize:26, fontWeight:600, letterSpacing:'-0.03em', lineHeight:1.42, color:'#0f172a', marginBottom:10 }}>
+                会議を録音して、<br/>議事録を作成
+              </h2>
+              {/* Description */}
+              <p style={{ fontSize:13.5, color:'#64748b', lineHeight:1.7, marginBottom:28 }}>
+                まず録音を始めて、必要な情報はあとから整えられます。
               </p>
+              {/* Recording button */}
+              <button onClick={startRec} style={idleStartBtnStyle}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+                録音開始
+              </button>
+              <p style={{ textAlign:'center', fontSize:11.5, color:'#b0bec5', marginTop:9, marginBottom:26 }}>
+                タップするだけで録音が始まります
+              </p>
+              {/* Divider */}
+              <hr style={{ border:'none', borderTop:'1px solid #f1f5f9', marginBottom:22 }}/>
+              {/* Steps */}
+              <div style={{ display:'flex' }}>
+                {[
+                  { num:'1', label:'録音する',   sub:'会議をそのまま記録',  on:true  },
+                  { num:'2', label:'AIで整える', sub:'逐語録を読みやすく',  on:false },
+                  { num:'3', label:'Wordで出力', sub:'提出しやすい形式へ',  on:false },
+                ].map((s, i) => (
+                  <div key={s.num} style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', textAlign:'center', position:'relative' }}>
+                    {i < 2 && <div style={{ position:'absolute', top:12, left:'50%', width:'100%', height:1, background:'#e8edf2' }}/>}
+                    <div style={{ width:24, height:24, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:600, position:'relative', zIndex:1, marginBottom:7, background:s.on?'#0891b2':'#fff', color:s.on?'#fff':'#94a3b8', border:s.on?'none':'1px solid #e2e8f0' }}>{s.num}</div>
+                    <div style={{ fontSize:12, fontWeight:500, color:'#64748b' }}>{s.label}</div>
+                    <div style={{ fontSize:11, color:'#b0bec5', marginTop:2, lineHeight:1.5 }}>{s.sub}</div>
+                  </div>
+                ))}
+              </div>
               {isMockAvailable && (
-                <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:11, color:'#9b59b6', cursor:'pointer', background:'#f5f0ff', border:'0.5px solid #d8b4fe', borderRadius:6, padding:'5px 10px' }}>
-                  <input
-                    type="checkbox"
-                    checked={mockMode}
-                    onChange={e => setMockMode(e.target.checked)}
-                    style={{ accentColor:'#9b59b6', cursor:'pointer' }}
-                  />
+                <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:11, color:'#9b59b6', cursor:'pointer', background:'#f5f0ff', border:'0.5px solid #d8b4fe', borderRadius:6, padding:'5px 10px', marginTop:16 }}>
+                  <input type="checkbox" checked={mockMode} onChange={e => setMockMode(e.target.checked)} style={{ accentColor:'#9b59b6', cursor:'pointer' }}/>
                   [DEV] モックモード（Deepgram接続なし・UIテスト用）
                 </label>
               )}
             </div>
-          )}
+            {/* ── Sidebar (right) ── */}
+            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              <MeetingInfoCard info={info} setField={setField} phase={phase} />
+              <DraftPanel
+                draftDragOver={draftDragOver}
+                onDragOver={e => { e.preventDefault(); setDraftDragOver(true) }}
+                onDragLeave={() => setDraftDragOver(false)}
+                onDrop={handleDraftDrop}
+                onOpenFile={() => draftFileRef.current?.click()}
+              />
+            </div>
+          </div>
+        )}
 
+        {/* ── Recording Card (non-idle) ── */}
+        {phase !== 'idle' && (
+        <Card>
           {phase === 'recording' && (
-            <div style={{ padding:'20px 20px 16px' }}>
-              {/* タイマー + ボタン行 */}
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:16, marginBottom:10 }}>
-                <button onClick={stopRec} style={micBtnStyle(true)}>
-                  <svg width="20" height="20" viewBox="0 0 24 24">
-                    <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/>
-                  </svg>
-                  <span>停止</span>
-                </button>
-                {isPaused ? (
-                  <button onClick={resumeRecording} style={pauseBtnStyle('resume')}>
-                    ▶ 再開
-                  </button>
-                ) : (
-                  <button onClick={pauseRecording} style={pauseBtnStyle('pause')}>
-                    ⏸ 一時停止
-                  </button>
-                )}
+            <div style={{ padding:'26px 34px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:32 }}>
+              {/* 左: rec-dot + タイマー + ライブバッジ */}
+              <div style={{ display:'flex', alignItems:'center', gap:28 }}>
+                <div>
+                  <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:6 }}>
+                    <span style={{ width:9, height:9, borderRadius:'50%', background:'#ef4444', flexShrink:0, display:'inline-block', animation:'pulse 1.4s ease-in-out infinite' }}/>
+                    <span style={{ fontSize:12.5, fontWeight:600, color:'#ef4444', letterSpacing:'0.04em' }}>録音中</span>
+                  </div>
+                  <div style={{ fontSize:38, fontWeight:300, color:'#0f172a', letterSpacing:'-0.04em', fontVariantNumeric:'tabular-nums', lineHeight:1 }}>
+                    {fmtSec(recSec)}
+                  </div>
+                </div>
+                <div style={{ display:'inline-flex', alignItems:'center', gap:6, background:'#ecfeff', border:'1px solid #cffafe', borderRadius:999, padding:'5px 13px 5px 10px', fontSize:12, fontWeight:500, color:'#0e7490' }}>
+                  <span style={{ width:7, height:7, borderRadius:'50%', background:'#0891b2', flexShrink:0, display:'inline-block', animation:'pulse 1.6s ease-in-out infinite' }}/>
+                  {(isMockAvailable && mockMode) ? 'モック（DEV）' : wsConnected ? 'ライブ文字起こし中' : wsError ? 'Deepgram 接続失敗' : '接続中…'}
+                </div>
               </div>
-              <div style={{ textAlign:'center', fontSize:28, fontWeight:600, color: isPaused ? '#d97706' : '#dc2626', letterSpacing:'0.08em', fontVariantNumeric:'tabular-nums' }}>
-                {fmtSec(recSec)}
-              </div>
-              <p style={{ textAlign:'center', fontSize:11, color: isPaused ? '#d97706' : '#dc2626', marginTop:4 }}>
-                {isPaused ? '一時停止中 — 再開または停止してください' : '録音中 — 停止後に自動で文字起こしが始まります'}
-              </p>
+              {/* 右: 停止ボタン */}
+              <button onClick={stopRec} style={{ display:'flex', alignItems:'center', gap:9, background:'#fff', border:'1.5px solid #e2e8f0', borderRadius:14, padding:'14px 26px', fontSize:15, fontWeight:600, color:'#475569', cursor:'pointer', fontFamily:'inherit', flexShrink:0 }}>
+                <span style={{ width:13, height:13, borderRadius:3, background:'#94a3b8', flexShrink:0, display:'inline-block' }}/>
+                録音を停止する
+              </button>
             </div>
           )}
 
@@ -1587,52 +1675,24 @@ export default function App() {
             </div>
           )}
         </Card>
-
-        {/* ── Meeting Info Card ── */}
-        <MeetingInfoCard info={info} setField={setField} />
-
-        {/* ── Draft resume card (idle only) ── */}
-        {phase === 'idle' && (
-          <div
-            onDragOver={e => { e.preventDefault(); setDraftDragOver(true) }}
-            onDragLeave={() => setDraftDragOver(false)}
-            onDrop={handleDraftDrop}
-            style={{
-              marginTop: 10,
-              background: draftDragOver ? '#eff6ff' : '#fff',
-              border: `${draftDragOver ? '1.5px dashed #3b82f6' : '0.5px solid #e8e8e8'}`,
-              borderRadius: 12,
-              padding: '18px 20px',
-              transition: 'background 0.15s, border 0.15s',
-            }}
-          >
-            <div style={{ fontSize:12, fontWeight:600, color:'#374151', marginBottom:12 }}>下書きから再開</div>
-            <div style={{
-              border: `${draftDragOver ? '1.5px dashed #3b82f6' : '1px dashed #d1d5db'}`,
-              borderRadius: 8,
-              padding: '20px 16px',
-              textAlign: 'center',
-              background: draftDragOver ? '#dbeafe' : '#f9fafb',
-              transition: 'background 0.15s, border 0.15s',
-              marginBottom: 12,
-            }}>
-              <p style={{ fontSize:12, color: draftDragOver ? '#1d4ed8' : '#6b7280', marginBottom:4 }}>
-                保存した下書きファイルをここにドラッグ＆ドロップしてください。
-              </p>
-              <p style={{ fontSize:11, color:'#9ca3af' }}>
-                または「下書きを開く」からファイルを選択できます。
-              </p>
-            </div>
-            <div style={{ display:'flex', justifyContent:'center' }}>
-              <button
-                onClick={() => draftFileRef.current?.click()}
-                style={{ fontSize:12, color:'#374151', background:'transparent', border:'0.5px solid #d1d5db', borderRadius:7, padding:'7px 20px', cursor:'pointer', fontFamily:'inherit', fontWeight:500 }}
-              >
-                下書きを開く
-              </button>
-            </div>
-          </div>
         )}
+
+        {/* ── Meeting Info Card (non-idle) ── */}
+        {phase !== 'idle' && <div style={{ marginTop:8 }}><MeetingInfoCard info={info} setField={setField} phase={phase} /></div>}
+
+
+        {/* ── 確認メモ（注意書き） ── */}
+        <div style={{ marginTop:16, padding:'11px 16px', borderTop:'1px solid #e8edf2', display:'flex', alignItems:'flex-start', gap:9 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0, marginTop:2 }}>
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          <div style={{ fontSize:11.5, color:'#94a3b8', lineHeight:1.75 }}>
+            <strong style={{ fontWeight:500, color:'#64748b' }}>提出前の確認をお願いします。</strong>
+            固有名詞・数値・決定事項はAIが誤認識する場合があります。
+          </div>
+        </div>
 
         {/* ── Inferred attendees banner ── */}
         {inferredAtt && (
@@ -1658,123 +1718,101 @@ export default function App() {
 
             {/* コントロールバー — 録音中のみ */}
             {phase === 'recording' && (
-              <div style={{ background: '#fff', border: '0.5px solid #e8e8e8', borderRadius: 12, padding: '12px 16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>確認間隔：</span>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {LIVE_INTERVALS.map(o => (
-                      <button
-                        key={o.v}
-                        onClick={() => setLiveInterval(o.v)}
-                        style={{
-                          fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
-                          fontFamily: 'inherit', border: '0.5px solid',
-                          background: liveInterval === o.v ? '#eff6ff' : 'transparent',
-                          color: liveInterval === o.v ? '#1a56db' : '#6b7280',
-                          borderColor: liveInterval === o.v ? '#93c5fd' : '#e5e7eb',
-                          fontWeight: liveInterval === o.v ? 600 : 400,
-                        }}
-                      >
-                        {o.l}
-                      </button>
-                    ))}
+              <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 20, padding: '16px 24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 0, flexWrap: 'wrap' }}>
+                  {/* 確認間隔 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingRight: 24 }}>
+                    <span style={{ fontSize: 11.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>確認間隔</span>
+                    <div style={{ display: 'flex', border: '1px solid #e2e8f0', borderRadius: 10, overflow: 'hidden' }}>
+                      {LIVE_INTERVALS.map((o, idx) => (
+                        <button
+                          key={o.v}
+                          onClick={() => setLiveInterval(o.v)}
+                          style={{
+                            padding: '7px 13px', fontSize: 12.5, fontWeight: 500, cursor: 'pointer',
+                            fontFamily: 'inherit', border: 'none',
+                            borderRight: idx < LIVE_INTERVALS.length - 1 ? '1px solid #e2e8f0' : 'none',
+                            background: liveInterval === o.v ? '#0891b2' : '#fff',
+                            color: liveInterval === o.v ? '#fff' : '#64748b',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >{o.l}</button>
+                      ))}
+                    </div>
                   </div>
-                  <button
-                    onClick={cutNow}
-                    style={{
-                      fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
-                      fontFamily: 'inherit', border: '0.5px dashed #93c5fd',
-                      background: 'rgba(26,86,219,0.04)', color: '#1a56db', whiteSpace: 'nowrap',
-                    }}
-                  >
-                    ✂ 今すぐ区切る
-                  </button>
-                  <div style={{ flex: 1 }} />
-                  <span style={{ fontSize: 10, whiteSpace: 'nowrap', color: (isMockAvailable && mockMode) ? '#9b59b6' : wsConnected ? '#16a34a' : wsError ? '#dc2626' : '#9ca3af' }}>
-                    {(isMockAvailable && mockMode) ? '● モック（DEV）' : wsConnected ? '● ライブ文字起こし中' : wsError ? '× Deepgram接続失敗' : '○ 接続中…'}
-                  </span>
+                  <div style={{ width: 1, height: 30, background: '#e2e8f0', flexShrink: 0 }}/>
+                  {/* 今すぐ区切る */}
+                  <div style={{ display: 'flex', alignItems: 'center', padding: '0 24px' }}>
+                    <button
+                      onClick={cutNow}
+                      style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '7px 14px', fontSize: 12.5, fontWeight: 500, color: '#475569', cursor: 'pointer', fontFamily: 'inherit' }}
+                    >
+                      ✂ 今すぐ区切る
+                    </button>
+                  </div>
+                  <div style={{ width: 1, height: 30, background: '#e2e8f0', flexShrink: 0 }}/>
+                  {/* 接続状態 */}
+                  <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 24 }}>
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500,
+                      background: (isMockAvailable && mockMode) ? '#f5f0ff' : wsConnected ? '#f0fdf4' : wsError ? '#fef2f2' : '#f8fafc',
+                      border: `1px solid ${(isMockAvailable && mockMode) ? '#d8b4fe' : wsConnected ? '#bbf7d0' : wsError ? '#fecaca' : '#e2e8f0'}`,
+                      color: (isMockAvailable && mockMode) ? '#9b59b6' : wsConnected ? '#15803d' : wsError ? '#b91c1c' : '#94a3b8',
+                    }}>
+                      {wsConnected && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                      {(isMockAvailable && mockMode) ? 'モック（DEV）' : wsConnected ? 'Deepgram 接続中' : wsError ? 'Deepgram 接続失敗' : '接続中…'}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
             {/* バナー + ナビゲーション — ブロックがある間は常に表示 */}
-            <div style={{ background: '#fff', border: '0.5px solid #e8e8e8', borderRadius: 12, padding: '12px 16px', marginTop: phase === 'recording' ? 6 : 0 }}>
-              {/* 確認用テキストバナー */}
-              <div style={{
-                padding: '7px 12px', borderRadius: 8,
-                background: '#f0f9ff', border: '0.5px solid #bae6fd',
-                fontSize: 11, color: '#0369a1',
-              }}>
-                AI整文済みの確認用テキストです。修正後「確認OK」を押してから議事録を生成してください。
-              </div>
-
-              {/* ナビゲーション */}
-              {liveBlocks.length > 0 && (
-                <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 11, color: '#6b7280' }}>
-                    <span style={{ color: '#16a34a', fontWeight: 500 }}>✓ {confirmed}</span>
-                    {' '}確認済
-                    <span style={{ color: toConfirm > 0 ? '#1a56db' : '#9ca3af', fontWeight: 500 }}>○ {toConfirm}</span>
-                    {' '}要確認
-                  </span>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button
-                      onClick={toNextUnchecked}
-                      disabled={toConfirm === 0}
-                      style={{
-                        fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: toConfirm === 0 ? 'not-allowed' : 'pointer',
-                        fontFamily: 'inherit', border: '0.5px solid #e5e7eb',
-                        background: 'transparent', color: toConfirm === 0 ? '#d1d5db' : '#374151',
-                      }}
-                    >
-                      次の要確認へ {toConfirm > 0 && <span style={{ background: '#1a56db', color: '#fff', borderRadius: 8, padding: '1px 5px', fontSize: 10 }}>{toConfirm}</span>}
-                    </button>
-                    <button
-                      onClick={toLatest}
-                      style={{
-                        fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
-                        fontFamily: 'inherit', border: '0.5px solid #e5e7eb',
-                        background: 'transparent', color: '#374151',
-                      }}
-                    >
-                      ↓ 最新へ
-                    </button>
-                  </div>
+            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 16, padding: '12px 20px', marginTop: phase === 'recording' ? 8 : 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                {/* 確認用テキストバナー */}
+                <div style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f9ff', border: '1px solid #bae6fd', fontSize: 11.5, color: '#0369a1' }}>
+                  AI整文済みのテキストです。修正後「確認OK」を押してください
                 </div>
-              )}
+                {/* ナビゲーション */}
+                {liveBlocks.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 11.5, color: '#6b7280', whiteSpace: 'nowrap' }}>
+                      <span style={{ color: '#16a34a', fontWeight: 600 }}>✓ {confirmed}</span>{' '}確認済
+                      <span style={{ color: toConfirm > 0 ? '#0891b2' : '#94a3b8', fontWeight: 600 }}>○ {toConfirm}</span>{' '}要確認
+                    </span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        onClick={toNextUnchecked}
+                        disabled={toConfirm === 0}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, padding: '7px 14px', borderRadius: 9, cursor: toConfirm === 0 ? 'not-allowed' : 'pointer', fontFamily: 'inherit', border: '1px solid #e2e8f0', background: '#f8fafc', color: toConfirm === 0 ? '#d1d5db' : '#475569', whiteSpace: 'nowrap' }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        次の要確認へ {toConfirm > 0 && <span style={{ background: '#0891b2', color: '#fff', borderRadius: 8, padding: '1px 5px', fontSize: 10 }}>{toConfirm}</span>}
+                      </button>
+                      <button
+                        onClick={toLatest}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, padding: '7px 14px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#475569' }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                        ライブ文字起こしに戻る
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Deepgram接続エラー — 録音中のみ */}
             {phase === 'recording' && wsError && !(isMockAvailable && mockMode) && (
-              <div style={{
-                background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: 8,
-                padding: '8px 14px', marginTop: 6, fontSize: 11, color: '#dc2626',
-              }}>
+              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '8px 16px', marginTop: 8, fontSize: 12, color: '#b91c1c' }}>
                 {wsError}
-              </div>
-            )}
-
-            {/* 新ブロック通知 — 録音中のみ */}
-            {phase === 'recording' && newBlockCount > 0 && (
-              <div style={{
-                background: '#eff6ff', border: '0.5px solid #bfdbfe', borderRadius: 8,
-                padding: '7px 14px', marginTop: 6,
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12,
-              }}>
-                <span style={{ color: '#1a56db' }}>+ 新しいブロックが {newBlockCount} 件追加されました</span>
-                <button
-                  onClick={toLatest}
-                  style={{ fontSize: 11, color: '#1a56db', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
-                >
-                  最新を見る →
-                </button>
               </div>
             )}
 
             {/* ブロック一覧 + ライブバッファ */}
             <div
-              ref={blockScrollRef}
-              onScroll={handleBlockScroll}
               style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}
             >
               {/* 空の状態 — 録音中かつブロックなし */}
@@ -1798,24 +1836,30 @@ export default function App() {
                   onUpdate={updateBlock}
                   onToggleMemo={() => setMemoOpen(m => ({ ...m, [blk.id]: !m[blk.id] }))}
                   onRetryFormat={() => formatBlock(blk.id, blk.orig)}
+                  onScrollToLatest={toLatest}
+                  isRecording={phase === 'recording'}
                 />
               ))}
 
               {/* ライブバッファ（現在の区間）— 録音中のみ */}
               {phase === 'recording' && (liveBuf || liveInterim) && (
                 <div style={{
-                  background: '#f0f9ff', border: '0.5px dashed #93c5fd',
-                  borderRadius: 10, padding: '12px 14px',
+                  background: '#f0f9ff', border: '1px dashed #a5f3fc',
+                  borderRadius: 16, padding: '14px 20px',
                 }}>
-                  <div style={{ fontSize: 10, color: '#1a56db', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#dc2626', animation: 'pulse 1.4s infinite' }} />
+                  <div style={{ fontSize: 11.5, color: '#0e7490', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#0891b2', animation: 'pulse 1.4s infinite', flexShrink: 0 }} />
                     {fmtSec(liveBufStart)} 〜 書き起こし中（最大 {liveInterval}秒）
                   </div>
-                  <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.8 }}>
+                  <div style={{ fontSize: 13.5, color: '#334155', lineHeight: 1.9 }}>
                     {liveBuf && <span>{liveBuf}</span>}
-                    {liveInterim && <span style={{ color: '#9ca3af' }}>{liveBuf ? '　' : ''}{liveInterim}</span>}
+                    {liveInterim && <span style={{ color: '#94a3b8' }}>{liveBuf ? '　' : ''}{liveInterim}</span>}
                   </div>
                 </div>
+              )}
+              <div ref={liveEndSentinelRef} style={{ height: phase === 'recording' ? 1 : 0 }} />
+              {phase === 'recording' && (
+                <div aria-hidden="true" style={{ height: '56vh', flexShrink: 0 }} />
               )}
             </div>
           </div>
@@ -1833,6 +1877,33 @@ export default function App() {
 
       </main>
 
+      {/* ── Fixed bottom recording bar (recording only) ── */}
+      {phase === 'recording' && (
+        <div ref={recordingBarRef} style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 30,
+          background: 'rgba(255,255,255,0.96)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          borderTop: '1px solid #e2e8f0',
+          padding: '10px 24px',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14,
+        }}>
+          <span style={{
+            fontSize: 15, fontWeight: 500, color: '#0f172a',
+            fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'center', letterSpacing: '-0.02em',
+          }}>
+            {fmtSec(recSec)}
+          </span>
+          <button
+            onClick={stopRec}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 20px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, border: '1.5px solid #e2e8f0', background: '#fff', color: '#475569' }}
+          >
+            <span style={{ width: 11, height: 11, borderRadius: 2, background: '#94a3b8', display: 'inline-block', flexShrink: 0 }}/>
+            録音を停止する
+          </button>
+        </div>
+      )}
+
       {/* ── Hidden file input for draft load ── */}
       <input
         ref={draftFileRef}
@@ -1847,7 +1918,7 @@ export default function App() {
 
 // ── Sub-components ──────────────────────────────────────────────────────────
 function Card({ children }: { children: React.ReactNode }) {
-  return <div style={{ background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, overflow:'hidden', marginTop:0 }}>{children}</div>
+  return <div style={{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:22, overflow:'hidden', marginTop:0 }}>{children}</div>
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -1879,17 +1950,33 @@ function DebugSection({ title, content }: { title: string; content: string }) {
   )
 }
 
-function MeetingInfoCard({ info, setField }: { info: Info; setField: (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) => void }) {
+function MeetingInfoCard({ info, setField, phase }: { info: Info; setField: (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) => void; phase: Phase }) {
   const [open, setOpen] = useState(true)
   return (
-    <div style={{ marginTop:10, background:'#fff', border:'0.5px solid #e8e8e8', borderRadius:12, overflow:'hidden' }}>
+    <div style={{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:20, overflow:'hidden' }}>
       <button onClick={() => setOpen(o => !o)}
-        style={{ width:'100%', padding:'12px 18px', display:'flex', justifyContent:'space-between', alignItems:'center', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>
-        <span style={{ fontSize:13, fontWeight:500, color:'#374151' }}>会議情報</span>
-        <span style={{ fontSize:10, color:'#9ca3af', transform: open ? 'rotate(180deg)' : 'none', transition:'transform .2s', display:'inline-block' }}>▼</span>
+        style={{ width:'100%', padding:'18px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:13 }}>
+          <div style={{ width:40, height:40, borderRadius:12, background:'#ecfeff', border:'1px solid #cffafe', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0891b2" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontSize:13.5, fontWeight:600, color:'#1e293b' }}>会議情報（任意）</div>
+            {!open && <div style={{ fontSize:11, color:'#94a3b8', marginTop:2 }}>未入力でも録音できます</div>}
+          </div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b0bec5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ flexShrink:0, transform: open ? 'rotate(180deg)' : 'none', transition:'transform 0.2s' }}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
       </button>
       {open && (
-        <div style={{ padding:'0 18px 18px', borderTop:'0.5px solid #f3f4f6' }}>
+        <div style={{ padding:'0 20px 20px', borderTop:'1px solid #f1f5f9' }}>
           <InfoField label="会議名">
             <input style={inputStyle} value={info.name} onChange={setField('name')} placeholder={PH}/>
           </InfoField>
@@ -1907,6 +1994,63 @@ function MeetingInfoCard({ info, setField }: { info: Info; setField: (k: keyof I
             <InfoField label="司会者"><input style={inputStyle} value={info.facil} onChange={setField('facil')} placeholder={PH}/></InfoField>
             <InfoField label="書記"><input style={inputStyle} value={info.sec} onChange={setField('sec')} placeholder={PH}/></InfoField>
             <InfoField label="出席者"><input style={inputStyle} value={info.att} onChange={setField('att')} placeholder={PH}/></InfoField>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DraftPanel({ draftDragOver, onDragOver, onDragLeave, onDrop, onOpenFile }: {
+  draftDragOver: boolean
+  onDragOver: (e: React.DragEvent<HTMLDivElement>) => void
+  onDragLeave: () => void
+  onDrop: (e: React.DragEvent<HTMLDivElement>) => void
+  onOpenFile: () => void
+}) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{ background: draftDragOver ? '#eff6ff' : '#fff', border:`1px ${draftDragOver ? 'dashed #3b82f6' : 'solid #e2e8f0'}`, borderRadius:20, overflow:'hidden', transition:'background 0.15s, border 0.15s' }}
+    >
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width:'100%', padding:'18px 20px', display:'flex', justifyContent:'space-between', alignItems:'center', background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}
+      >
+        <div style={{ display:'flex', alignItems:'center', gap:13 }}>
+          <div style={{ width:40, height:40, borderRadius:12, background:'#f8fafc', border:'1px solid #f1f5f9', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 16 12 12 8 16"/>
+              <line x1="12" y1="12" x2="12" y2="21"/>
+              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontSize:13.5, fontWeight:600, color:'#1e293b' }}>下書きから再開</div>
+            <div style={{ fontSize:11, color:'#94a3b8', marginTop:2 }}>保存済みの作業を続けられます</div>
+          </div>
+        </div>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#b0bec5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          style={{ flexShrink:0, transform: open ? 'rotate(180deg)' : 'none', transition:'transform 0.2s' }}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      {open && (
+        <div style={{ borderTop:'1px solid #f1f5f9', padding:'18px 20px' }}>
+          <div style={{ border:`1px ${draftDragOver ? 'dashed #3b82f6' : 'dashed #d1d9e0'}`, borderRadius:12, padding:'22px 16px', textAlign:'center', background: draftDragOver ? '#dbeafe' : '#f8fafc', transition:'background 0.15s, border 0.15s' }}>
+            <div style={{ fontSize:13, fontWeight:600, color:'#334155', marginBottom:3 }}>
+              {draftDragOver ? 'ここにドロップしてください' : 'ファイルをドラッグ＆ドロップ'}
+            </div>
+            <div style={{ fontSize:11.5, color:'#94a3b8', marginBottom:13 }}>またはボタンから選択できます</div>
+            <button
+              onClick={onOpenFile}
+              style={{ background:'#fff', border:'1px solid #e2e8f0', borderRadius:10, padding:'8px 18px', fontSize:12.5, fontWeight:500, color:'#475569', cursor:'pointer', fontFamily:'inherit' }}
+            >
+              下書きを開く
+            </button>
           </div>
         </div>
       )}
@@ -1974,9 +2118,11 @@ interface LiveBlockCardProps {
   onUpdate: (id: string, u: Partial<Block>) => void
   onToggleMemo: () => void
   onRetryFormat?: () => void
+  onScrollToLatest?: () => void  // ライブ文字起こしに戻るボタン用
+  isRecording?: boolean          // phase === 'recording' のときだけボタン表示
 }
 
-function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRetryFormat }: LiveBlockCardProps) {
+function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRetryFormat, onScrollToLatest, isRecording }: LiveBlockCardProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // 整文完了・status変化のタイミングで高さを同期的に再計算（useLayoutEffect で描画前に確定させる）
@@ -2132,6 +2278,14 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
         >
           📝 メモ
         </button>
+        {isRecording && onScrollToLatest && (
+          <button
+            onClick={onScrollToLatest}
+            style={{ fontSize: 11, padding: '4px 9px', borderRadius: 7, cursor: 'pointer', fontFamily: 'inherit', border: '1px solid #e2e8f0', background: '#f8fafc', color: '#94a3b8' }}
+          >
+            ↓ ライブ文字起こしに戻る
+          </button>
+        )}
       </div>
     </div>
   )
@@ -2168,6 +2322,14 @@ const micBtnStyle = (rec: boolean): React.CSSProperties => ({
   animation: rec ? 'pulse 1.4s infinite' : 'none',
 })
 
+const idleStartBtnStyle: React.CSSProperties = {
+  width: '100%', padding: '22px 0', border: 'none',
+  borderRadius: 18, background: '#0891b2', color: '#fff',
+  cursor: 'pointer', display: 'flex', alignItems: 'center',
+  justifyContent: 'center', gap: 11, fontSize: 19, fontWeight: 600,
+  fontFamily: 'inherit', letterSpacing: '-0.02em',
+}
+
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '8px 11px', border: '0.5px solid #e5e7eb',
   borderRadius: 7, background: '#f9fafb', fontSize: 13, color: '#111',
@@ -2198,14 +2360,6 @@ const errBoxStyle: React.CSSProperties = {
   background: '#fef2f2', border: '0.5px solid #fecaca', borderRadius: 8,
   padding: '10px 14px', fontSize: 12, color: '#dc2626', marginBottom: 10,
 }
-
-const pauseBtnStyle = (mode: 'pause' | 'resume'): React.CSSProperties => ({
-  padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
-  fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
-  border: `0.5px solid ${mode === 'pause' ? '#fde68a' : '#bbf7d0'}`,
-  background: mode === 'pause' ? '#fffbeb' : '#f0fdf4',
-  color: mode === 'pause' ? '#d97706' : '#16a34a',
-})
 
 const liveActionBtn = (active: boolean, color: string, activeBg: string, activeBorder: string): React.CSSProperties => ({
   fontSize: 11, padding: '3px 9px', borderRadius: 6, cursor: 'pointer',

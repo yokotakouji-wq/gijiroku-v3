@@ -1,0 +1,212 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.root { background: #f1f5f9; min-height: 100vh; font-family: 'Hiragino Kaku Gothic ProN','Noto Sans JP','Yu Gothic',sans-serif; color: #1e293b; }
+
+/* ── header ── */
+.hd { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 15px 32px; display: flex; align-items: center; gap: 13px; }
+.hd-logo { width: 42px; height: 42px; border-radius: 13px; background: #ecfeff; border: 1px solid #cffafe; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.hd-logo svg { width: 21px; height: 21px; color: #0891b2; }
+.hd-name { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
+.hd-sub  { font-size: 11.5px; color: #64748b; margin-top: 1px; }
+
+/* ── body ── */
+.body { padding: 26px 32px 30px; width: 100%; }
+.grid { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr); gap: 18px; }
+
+/* ── main card ── */
+.mc { background: #fff; border: 1px solid #e2e8f0; border-radius: 26px; padding: 36px 38px 32px; display: flex; flex-direction: column; }
+
+/* badge — 短くシンプルに */
+.badge { display: inline-flex; align-items: center; gap: 5px; background: #ecfeff; border: 1px solid #cffafe; border-radius: 999px; padding: 4px 12px 4px 9px; font-size: 11.5px; font-weight: 500; color: #0e7490; margin-bottom: 18px; width: fit-content; }
+.badge svg { width: 12px; height: 12px; }
+
+.mc-title { font-size: 26px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.42; color: #0f172a; margin-bottom: 10px; }
+
+/* 説明文 — 1行・短く */
+.mc-desc { font-size: 13.5px; color: #64748b; line-height: 1.7; margin-bottom: 28px; }
+
+/* ── 録音ボタン ── */
+.rec-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 11px; background: #0891b2; color: #fff; border: none; border-radius: 18px; padding: 22px 0; font-size: 19px; font-weight: 600; letter-spacing: -0.02em; cursor: pointer; font-family: inherit; }
+.rec-btn svg { width: 24px; height: 24px; }
+.rec-hint { text-align: center; font-size: 11.5px; color: #b0bec5; margin-top: 9px; margin-bottom: 26px; }
+
+/* ── divider ── */
+.div { border: none; border-top: 1px solid #f1f5f9; margin-bottom: 22px; }
+
+/* ── steps — 控えめに ── */
+.steps { display: flex; }
+.step { flex: 1; display: flex; flex-direction: column; align-items: center; text-align: center; position: relative; }
+.step:not(:last-child)::after { content: ''; position: absolute; top: 12px; left: 50%; width: 100%; height: 1px; background: #e8edf2; }
+.step-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; position: relative; z-index: 1; margin-bottom: 7px; }
+.step-num.on  { background: #0891b2; color: #fff; }
+.step-num.off { background: #fff; color: #94a3b8; border: 1px solid #e2e8f0; }
+.step-label { font-size: 12px; font-weight: 500; color: #64748b; }
+.step-sub   { font-size: 11px; color: #b0bec5; margin-top: 2px; line-height: 1.5; }
+
+/* ── sidebar ── */
+.sb { display: flex; flex-direction: column; gap: 14px; }
+.panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; }
+.ph { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px; cursor: pointer; }
+.pl { display: flex; align-items: center; gap: 13px; }
+.pi { width: 40px; height: 40px; border-radius: 12px; background: #f8fafc; border: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.pi svg { width: 18px; height: 18px; }
+.pi.cyan { background: #ecfeff; border-color: #cffafe; }
+.pi.cyan svg { color: #0891b2; }
+.pi.gray svg { color: #64748b; }
+.pt { font-size: 13.5px; font-weight: 600; color: #1e293b; }
+.ps { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.chev { width: 16px; height: 16px; color: #b0bec5; transition: transform 0.2s; flex-shrink: 0; }
+.chev.open { transform: rotate(180deg); }
+.pb { border-top: 1px solid #f1f5f9; padding: 18px 20px; display: none; }
+.pb.open { display: block; }
+
+.field { margin-bottom: 11px; }
+.field:last-child { margin-bottom: 0; }
+.fl { font-size: 11px; font-weight: 500; color: #94a3b8; margin-bottom: 5px; display: block; }
+.fi { width: 100%; background: #f8fafc; border: 1px solid #e8edf2; border-radius: 10px; padding: 9px 12px; font-size: 13px; color: #334155; font-family: inherit; outline: none; }
+.fr { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+
+.drop { border: 1px dashed #d1d9e0; border-radius: 12px; padding: 22px 16px; text-align: center; background: #f8fafc; }
+.drop-t { font-size: 13px; font-weight: 600; color: #334155; }
+.drop-s { font-size: 11.5px; color: #94a3b8; margin-top: 3px; margin-bottom: 13px; }
+.drop-b { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 18px; font-size: 12.5px; font-weight: 500; color: #475569; cursor: pointer; font-family: inherit; }
+
+/* ── 注意文 — 静かに ── */
+.note { margin-top: 16px; padding: 11px 16px; border-top: 1px solid #e8edf2; display: flex; align-items: flex-start; gap: 9px; }
+.note svg { width: 13px; height: 13px; color: #94a3b8; flex-shrink: 0; margin-top: 2px; }
+.note-text { font-size: 11.5px; color: #94a3b8; line-height: 1.75; }
+.note-text strong { font-weight: 500; color: #64748b; }
+</style>
+
+<div class="root">
+  <header class="hd">
+    <div class="hd-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+      </svg>
+    </div>
+    <div>
+      <div class="hd-name">議事録メーカー</div>
+      <div class="hd-sub">録音から議事録作成まで、ひとつの流れで</div>
+    </div>
+  </header>
+
+  <div class="body">
+    <div class="grid">
+
+      <div class="mc">
+        <div class="badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          会議情報は録音の前後いつでも追記できます
+        </div>
+
+        <div class="mc-title">会議を録音して、<br>議事録を作成</div>
+
+        <div class="mc-desc">まず録音を始めて、必要な情報はあとから整えられます。</div>
+
+        <button class="rec-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+          録音開始
+        </button>
+        <div class="rec-hint">タップするだけで録音が始まります</div>
+
+        <hr class="div">
+
+        <div class="steps">
+          <div class="step">
+            <div class="step-num on">1</div>
+            <div class="step-label">録音する</div>
+            <div class="step-sub">会議をそのまま記録</div>
+          </div>
+          <div class="step">
+            <div class="step-num off">2</div>
+            <div class="step-label">AIで整える</div>
+            <div class="step-sub">逐語録を読みやすく</div>
+          </div>
+          <div class="step">
+            <div class="step-num off">3</div>
+            <div class="step-label">Wordで出力</div>
+            <div class="step-sub">提出しやすい形式へ</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sb">
+        <div class="panel">
+          <div class="ph" onclick="tog(this)">
+            <div class="pl">
+              <div class="pi cyan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              </div>
+              <div>
+                <div class="pt">会議情報（任意）</div>
+                <div class="ps">未入力でも録音できます</div>
+              </div>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="pb">
+            <div class="field">
+              <span class="fl">会議名</span>
+              <input class="fi" type="text" placeholder="録音から自動で補完されます">
+            </div>
+            <div class="fr">
+              <div class="field"><span class="fl">開始</span><input class="fi" type="text" placeholder="年/月/日 --:--"></div>
+              <div class="field"><span class="fl">終了</span><input class="fi" type="text" placeholder="年/月/日 --:--"></div>
+            </div>
+            <div class="fr">
+              <div class="field"><span class="fl">開催場所</span><input class="fi" type="text" placeholder="自動入力"></div>
+              <div class="field"><span class="fl">出席者</span><input class="fi" type="text" placeholder="自動入力"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="ph" onclick="tog(this)">
+            <div class="pl">
+              <div class="pi gray">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+              </div>
+              <div>
+                <div class="pt">下書きから再開</div>
+                <div class="ps">保存済みの作業を続けられます</div>
+              </div>
+            </div>
+            <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div class="pb">
+            <div class="drop">
+              <div class="drop-t">ファイルをドラッグ＆ドロップ</div>
+              <div class="drop-s">またはボタンから選択できます</div>
+              <button class="drop-b">下書きを開く</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div class="note-text"><strong>提出前の確認をお願いします。</strong>固有名詞・数値・決定事項はAIが誤認識する場合があります。</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function tog(hd) {
+  var b = hd.nextElementSibling, c = hd.querySelector('.chev');
+  var o = b.classList.contains('open');
+  b.classList.toggle('open', !o);
+  c.classList.toggle('open', !o);
+}
+</script>

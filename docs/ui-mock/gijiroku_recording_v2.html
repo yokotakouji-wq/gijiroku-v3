@@ -1,0 +1,301 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #f1f5f9; }
+.root { background: #f1f5f9; min-height: 100vh; font-family: 'Hiragino Kaku Gothic ProN','Noto Sans JP','Yu Gothic',sans-serif; color: #1e293b; }
+
+.hd { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 13px 32px; display: flex; align-items: center; gap: 13px; }
+.hd-logo { width: 40px; height: 40px; border-radius: 13px; background: #ecfeff; border: 1px solid #cffafe; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.hd-logo svg { width: 20px; height: 20px; color: #0891b2; }
+.hd-name { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
+.hd-sub  { font-size: 11.5px; color: #64748b; margin-top: 1px; }
+
+/* ── トップ画面と揃えた共通ボディ幅 ── */
+.body-outer { padding: 22px 32px 28px; }
+.body { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+
+/* status card */
+.status-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 22px; padding: 26px 34px; display: flex; align-items: center; justify-content: space-between; gap: 32px; }
+.status-left { display: flex; align-items: center; gap: 28px; }
+.rec-dot-wrap { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.rec-dot { width: 9px; height: 9px; border-radius: 50%; background: #ef4444; animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.rec-label { font-size: 12.5px; font-weight: 600; color: #ef4444; letter-spacing: .04em; }
+.timer { font-size: 38px; font-weight: 300; letter-spacing: -0.04em; color: #0f172a; font-variant-numeric: tabular-nums; }
+.live-badge { display: inline-flex; align-items: center; gap: 6px; background: #ecfeff; border: 1px solid #cffafe; border-radius: 999px; padding: 5px 13px 5px 10px; font-size: 12px; font-weight: 500; color: #0e7490; }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #0891b2; animation: pulse 1.6s ease-in-out infinite; }
+.stop-btn { display: flex; align-items: center; gap: 9px; background: #fff; border: 1.5px solid #e2e8f0; border-radius: 14px; padding: 14px 26px; font-size: 15px; font-weight: 600; color: #475569; cursor: pointer; font-family: inherit; flex-shrink: 0; }
+.stop-icon { width: 13px; height: 13px; border-radius: 3px; background: #94a3b8; flex-shrink: 0; }
+
+/* ctrl */
+.ctrl-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 16px 24px; display: flex; align-items: center; gap: 0; flex-wrap: wrap; }
+.ctrl-section { display: flex; align-items: center; gap: 10px; padding: 0 24px; }
+.ctrl-section:first-child { padding-left: 0; }
+.ctrl-section:last-child  { padding-right: 0; }
+.ctrl-sep { width: 1px; height: 30px; background: #e2e8f0; flex-shrink: 0; }
+.ctrl-label { font-size: 11.5px; color: #94a3b8; white-space: nowrap; }
+.seg { display: flex; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+.seg-btn { padding: 7px 13px; font-size: 12.5px; font-weight: 500; color: #64748b; background: #fff; border: none; cursor: pointer; font-family: inherit; white-space: nowrap; }
+.seg-btn.active { background: #0891b2; color: #fff; }
+.cut-btn { display: flex; align-items: center; gap: 7px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 7px 14px; font-size: 12.5px; font-weight: 500; color: #475569; cursor: pointer; font-family: inherit; }
+.cut-btn svg { width: 14px; height: 14px; color: #64748b; }
+.status-pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; padding: 6px 12px; font-size: 12px; font-weight: 500; background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; }
+.status-pill svg { width: 12px; height: 12px; }
+
+/* blocks */
+.blocks-wrap { display: flex; flex-direction: column; gap: 12px; }
+.block-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; }
+.block-hd { padding: 13px 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #f1f5f9; }
+.block-hd-left { display: flex; align-items: center; gap: 10px; }
+.block-time { font-size: 12px; font-weight: 600; color: #94a3b8; }
+.block-num  { font-size: 11.5px; color: #94a3b8; }
+.tag { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 10px; font-size: 11.5px; font-weight: 500; }
+.tag-ok   { background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d; }
+.tag-live { background: #ecfeff; border: 1px solid #cffafe; color: #0e7490; }
+.tag-hold { background: #fafafa; border: 1px solid #e2e8f0; color: #94a3b8; }
+
+.block-body { padding: 18px 24px; }
+.block-text { font-size: 14px; line-height: 1.9; color: #334155; }
+.block-text.muted { color: #94a3b8; }
+
+.block-actions { padding: 11px 24px 13px; border-top: 1px solid #f1f5f9; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.act-btn { display: flex; align-items: center; gap: 6px; border-radius: 9px; padding: 7px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: inherit; border: 1px solid #e2e8f0; background: #fff; color: #475569; }
+.act-btn.primary { background: #0891b2; border-color: #0891b2; color: #fff; }
+.act-btn.danger  { border-color: #fecaca; color: #b91c1c; }
+.act-btn.warn    { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.act-btn svg { width: 13px; height: 13px; }
+.act-spacer { flex: 1; }
+.nav-btn { display: flex; align-items: center; gap: 6px; border-radius: 9px; padding: 7px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: inherit; border: 1px solid #e2e8f0; background: #f8fafc; color: #475569; }
+.nav-btn svg { width: 13px; height: 13px; }
+
+.cursor { display: inline-block; width: 2px; height: 1em; background: #0891b2; margin-left: 2px; vertical-align: text-bottom; animation: blink .9s step-end infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* meeting info */
+.info-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 20px; overflow: hidden; }
+.info-hd { display: flex; align-items: center; justify-content: space-between; padding: 15px 22px; cursor: pointer; }
+.info-left { display: flex; align-items: center; gap: 12px; }
+.info-ico { width: 36px; height: 36px; border-radius: 11px; background: #ecfeff; border: 1px solid #cffafe; display: flex; align-items: center; justify-content: center; }
+.info-ico svg { width: 16px; height: 16px; color: #0891b2; }
+.info-title { font-size: 13px; font-weight: 600; }
+.info-sub   { font-size: 11px; color: #94a3b8; margin-top: 1px; }
+.chev { width: 16px; height: 16px; color: #b0bec5; transition: transform .2s; }
+.chev.open { transform: rotate(180deg); }
+.info-body { border-top: 1px solid #f1f5f9; padding: 16px 22px; display: none; grid-template-columns: repeat(4,1fr); gap: 12px; }
+.info-body.open { display: grid; }
+.info-field label { font-size: 11px; color: #94a3b8; display: block; margin-bottom: 4px; }
+.info-field input { width: 100%; background: #f8fafc; border: 1px solid #e8edf2; border-radius: 9px; padding: 8px 11px; font-size: 12.5px; color: #334155; font-family: inherit; outline: none; }
+</style>
+
+<div class="root">
+  <header class="hd">
+    <div class="hd-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+      </svg>
+    </div>
+    <div>
+      <div class="hd-name">議事録メーカー</div>
+      <div class="hd-sub">録音から議事録作成まで、ひとつの流れで</div>
+    </div>
+  </header>
+
+  <div class="body-outer">
+    <div class="body">
+
+      <!-- 1. ステータスカード -->
+      <div class="status-card">
+        <div class="status-left">
+          <div>
+            <div class="rec-dot-wrap">
+              <div class="rec-dot"></div>
+              <span class="rec-label">録音中</span>
+            </div>
+            <div class="timer">02:40</div>
+          </div>
+          <div class="live-badge">
+            <div class="live-dot"></div>
+            ライブ文字起こし中
+          </div>
+        </div>
+        <button class="stop-btn">
+          <div class="stop-icon"></div>
+          録音を停止する
+        </button>
+      </div>
+
+      <!-- 2. 操作パネル -->
+      <div class="ctrl-card">
+        <div class="ctrl-section">
+          <span class="ctrl-label">確認間隔</span>
+          <div class="seg">
+            <button class="seg-btn">30秒</button>
+            <button class="seg-btn active">1分</button>
+            <button class="seg-btn">2分</button>
+            <button class="seg-btn">5分</button>
+          </div>
+        </div>
+        <div class="ctrl-sep"></div>
+        <div class="ctrl-section">
+          <button class="cut-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/></svg>
+            今すぐ区切る
+          </button>
+        </div>
+        <div class="ctrl-sep"></div>
+        <div class="ctrl-section">
+          <div class="status-pill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Deepgram 接続中
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. 確認ブロック群 -->
+      <div class="blocks-wrap">
+
+        <!-- 確認済み -->
+        <div class="block-card">
+          <div class="block-hd">
+            <div class="block-hd-left">
+              <span class="block-time">00:00 〜 01:00</span>
+              <span class="tag tag-ok">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="11" height="11"><polyline points="20 6 9 17 4 12"/></svg>
+                確認済み
+              </span>
+            </div>
+            <span class="block-num">ブロック 1</span>
+          </div>
+          <div class="block-body">
+            <div class="block-text">田中部長より、本日の議題について説明がありました。来月の施設改修に伴い、入居者の一時的な居室変更について、各フロアのリーダーと事前に調整を進める方針が確認されました。具体的なスケジュールは来週中に共有予定とのことです。</div>
+          </div>
+          <div class="block-actions">
+            <button class="act-btn warn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              重要
+            </button>
+            <button class="act-btn danger">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              除外
+            </button>
+            <button class="act-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              メモ
+            </button>
+            <div class="act-spacer"></div>
+            <button class="nav-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              次の要確認へ
+            </button>
+            <button class="nav-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+              最新へ
+            </button>
+          </div>
+        </div>
+
+        <!-- 要確認 -->
+        <div class="block-card" style="border-color:#bae6fd;">
+          <div class="block-hd" style="border-bottom-color:#e0f2fe;">
+            <div class="block-hd-left">
+              <span class="block-time">01:00 〜 02:00</span>
+              <span class="tag tag-hold">要確認</span>
+            </div>
+            <span class="block-num">ブロック 2</span>
+          </div>
+          <div class="block-body">
+            <div class="block-text">山本看護師より、夜間の体位変換記録について報告がありました。入居者のたなか（田中）さんについて、医師より姿勢保持クッションの使用指示が出ており、夜勤スタッフへの申し送りを徹底するよう依頼がありました。次回のカンファレンスで改めて確認する予定です。</div>
+          </div>
+          <div class="block-actions">
+            <button class="act-btn primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              確認OK
+            </button>
+            <button class="act-btn warn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              重要
+            </button>
+            <button class="act-btn danger">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              除外
+            </button>
+            <button class="act-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              メモ
+            </button>
+            <div class="act-spacer"></div>
+            <button class="nav-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              次の要確認へ
+            </button>
+            <button class="nav-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+              最新へ
+            </button>
+          </div>
+        </div>
+
+        <!-- 書き起こし中 -->
+        <div class="block-card" style="border-color:#e0f2fe;">
+          <div class="block-hd" style="background:#f0f9ff; border-bottom-color:#e0f2fe;">
+            <div class="block-hd-left">
+              <span class="block-time">02:00 〜</span>
+              <span class="tag tag-live">
+                <div style="width:7px;height:7px;border-radius:50%;background:#0891b2;animation:pulse 1.4s ease-in-out infinite;flex-shrink:0;"></div>
+                書き起こし中
+              </span>
+            </div>
+            <span class="block-num">ブロック 3</span>
+          </div>
+          <div class="block-body">
+            <div class="block-text muted">続いて佐藤施設長より、来月の行事について説明がありました。敬老の日に向けて、家族参加型のレクリエーションを企画中とのことで、現在ボランティアの受け入れ調整を進めているとのことです<span class="cursor"></span></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 4. 会議情報（折りたたみ） -->
+      <div class="info-card">
+        <div class="info-hd" onclick="toggleInfo(this)">
+          <div class="info-left">
+            <div class="info-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </div>
+            <div>
+              <div class="info-title">会議情報</div>
+              <div class="info-sub">録音中でも追記できます</div>
+            </div>
+          </div>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div class="info-body" id="infoBody">
+          <div class="info-field"><label>会議名</label><input type="text" placeholder="例：5月 定例スタッフ会議"></div>
+          <div class="info-field"><label>開催場所</label><input type="text" placeholder="例：2F 会議室"></div>
+          <div class="info-field"><label>出席者</label><input type="text" placeholder="例：田中・山本・佐藤"></div>
+          <div class="info-field"><label>開始時刻</label><input type="text" placeholder="2026/05/04 10:00"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleInfo(hd) {
+  var body = document.getElementById('infoBody');
+  var chev = hd.querySelector('.chev');
+  var o = body.classList.contains('open');
+  body.classList.toggle('open', !o);
+  chev.classList.toggle('open', !o);
+}
+var sec = 160;
+setInterval(function(){
+  sec++;
+  var m = String(Math.floor(sec/60)).padStart(2,'0');
+  var s = String(sec%60).padStart(2,'0');
+  document.querySelector('.timer').textContent = m + ':' + s;
+}, 1000);
+</script>
