@@ -2028,7 +2028,23 @@ function MeetingInfoCard({ info, setField, phase }: { info: Info; setField: (k: 
             </InfoField>
             <span style={{ fontSize:16, color:'#d1d5db', paddingBottom:8, textAlign:'center' }}>〜</span>
             <InfoField label="終了">
-              <input type="datetime-local" style={inputStyle} value={info.dateEnd} onChange={setField('dateEnd')}/>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="datetime-local"
+                  style={{ ...inputStyle, color: info.dateEnd ? '#111' : 'transparent' }}
+                  value={info.dateEnd}
+                  onChange={setField('dateEnd')}
+                />
+                {!info.dateEnd && (
+                  <span style={{
+                    position: 'absolute', inset: 0, padding: '8px 11px',
+                    fontSize: 13, color: '#b0bec5', pointerEvents: 'none',
+                    display: 'flex', alignItems: 'center',
+                  }}>
+                    停止後に自動入力
+                  </span>
+                )}
+              </div>
             </InfoField>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
