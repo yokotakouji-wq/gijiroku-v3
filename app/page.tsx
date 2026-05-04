@@ -7,6 +7,7 @@ import { upload } from '@vercel/blob/client'
 type Phase =
   | 'idle'
   | 'recording'
+  | 'stopped'
   | 'uploading'
   | 'transcribing'
   | 'extracting'
@@ -212,6 +213,7 @@ export default function App() {
   const liveHadTextRef      = useRef(false)
   const lastFocusBlurRef    = useRef(0)      // 入力要素からblurした時刻(ms)
   const autoFollowPausedRef = useRef(false)  // 手動スクロール後、自動追従を停止するフラグ
+  const isPausingRef        = useRef(false)  // true のとき onstop で processAllChunks を呼ばず stopped へ移行
 
   liveIntervalRef.current  = liveInterval
   liveBlocksRef.current    = liveBlocks
@@ -228,7 +230,7 @@ export default function App() {
   }
 
   function fixedBottomOffset() {
-    return phase === 'recording' ? (recordingBarRef.current?.offsetHeight ?? 0) : 0
+    return (phase === 'recording' || phase === 'stopped') ? (recordingBarRef.current?.offsetHeight ?? 0) : 0
   }
 
   function scrollLiveTranscriptToLatest(smooth = true) {
@@ -484,6 +486,13 @@ export default function App() {
         isRotatingRef.current = false
         console.log(`[chunk] rotating — starting recorder #${chunkIndexRef.current}`)
         startChunkRecorder(stream, mimeType)
+      } else if (isPausingRef.current) {
+        // 一時停止：processAllChunks は呼ばず stopped へ移行
+        isPausingRef.current = false
+        console.log(`[chunk] pausing — total chunks so far: ${audioChunksRef.current.length}`)
+        stream.getTracks().forEach(t => t.stop())
+        recordingStreamRef.current = null
+        setPhase('stopped')
       } else {
         console.log(`[chunk] final stop — total chunks: ${audioChunksRef.current.length}, stopping stream`)
         stream.getTracks().forEach(t => t.stop())
@@ -618,9 +627,8 @@ export default function App() {
     // チャンクローテーションを止める（これ以上の分割はしない）
     if (chunkIntervalRef.current) { clearInterval(chunkIntervalRef.current); chunkIntervalRef.current = null }
 
-    const dur = Date.now() - startWall.current
-    const end = new Date(new Date(info.dateStart).getTime() + dur)
-    setInfo(p => ({ ...p, dateEnd: fmtLocal(end) }))
+    // 会議全体の終了時刻を現在時刻で更新（再開のたびに上書き）
+    setInfo(p => ({ ...p, dateEnd: fmtLocal(new Date()) }))
 
     // 残りバッファをシール
     seal()
@@ -630,8 +638,8 @@ export default function App() {
     if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.close()
     setWsConnected(false)
 
-    // メイン MediaRecorder 停止 → onstop → processAllChunks
-    // isRotatingRef を false にして、次の onstop を「最終停止」として扱う
+    // isPausingRef = true のとき onstop は processAllChunks を呼ばず stopped へ移行する
+    isPausingRef.current = true
     isRotatingRef.current = false
     if (mrRef.current?.state === 'recording') mrRef.current.stop()
   }
@@ -789,6 +797,53 @@ export default function App() {
     if (!dbgTranscript) return
     setErrMsg('')
     await runFromExtract(dbgTranscript)
+  }
+
+  // 「議事録を生成」ボタン: liveBlocks から直接 runFromExtract へ（二重文字起こしなし）
+  async function generateMinutes() {
+    const transcript = buildLiveBlocksTranscript(liveBlocksRef.current)
+    if (transcript.trim()) {
+      setDbgTranscript(transcript)
+      await runFromExtract(transcript)
+    } else {
+      // liveBlocks が空の場合のみ録音チャンク経由にフォールバック
+      await processAllChunks(chunkMimeTypeRef.current)
+    }
+  }
+
+  // 「録音を再開」: liveBlocks / dateStart / audioChunks は保持し、新しいカードから開始
+  async function resumeRec() {
+    // バッファ・interim だけクリア（次の発話が新しいブロックとして追加される）
+    startWall.current = Date.now() - recSec * 1000  // タイマーを継続
+    liveBufRef.current = ''
+    liveBufStartRef.current = recSec
+    setLiveBuf('')
+    setLiveInterim('')
+    setWsConnected(false)
+    setWsError('')
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      recordingStreamRef.current = stream
+      const mimeType = chunkMimeTypeRef.current
+
+      startChunkRecorder(stream, mimeType)
+      chunkIntervalRef.current = setInterval(() => rotateChunk(), CHUNK_DURATION_MS)
+
+      setPhase('recording')
+      timerRef.current = setInterval(
+        () => setRecSec(Math.floor((Date.now() - startWall.current) / 1000)), 500
+      )
+
+      if (isMockAvailable && mockMode) {
+        connectMockTranscription()
+      } else {
+        connectDeepgramWS(stream)
+      }
+    } catch {
+      setErrMsg('マイクへのアクセスが許可されていません。ブラウザの設定を確認してください。')
+      setPhase('error')
+    }
   }
 
   async function runFromExtract(transcript: string) {
@@ -1619,6 +1674,37 @@ export default function App() {
             </div>
           )}
 
+          {phase === 'stopped' && (
+            <div style={{ padding:'26px 34px', display:'flex', alignItems:'center', justifyContent:'space-between', gap:32, flexWrap:'wrap' }}>
+              {/* 左: タイマー（一時停止表示） */}
+              <div>
+                <div style={{ display:'flex', alignItems:'center', gap:9, marginBottom:6 }}>
+                  <span style={{ width:9, height:9, borderRadius:'50%', background:'#94a3b8', flexShrink:0, display:'inline-block' }}/>
+                  <span style={{ fontSize:12.5, fontWeight:600, color:'#94a3b8', letterSpacing:'0.04em' }}>一時停止中</span>
+                </div>
+                <div style={{ fontSize:38, fontWeight:300, color:'#94a3b8', letterSpacing:'-0.04em', fontVariantNumeric:'tabular-nums', lineHeight:1 }}>
+                  {fmtSec(recSec)}
+                </div>
+              </div>
+              {/* 右: ボタン2つ */}
+              <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                <button
+                  onClick={resumeRec}
+                  style={{ display:'flex', alignItems:'center', gap:8, background:'#f0fdf4', border:'1.5px solid #bbf7d0', borderRadius:14, padding:'14px 26px', fontSize:15, fontWeight:600, color:'#16a34a', cursor:'pointer', fontFamily:'inherit', flexShrink:0 }}
+                >
+                  <span style={{ width:9, height:9, borderRadius:'50%', background:'#16a34a', flexShrink:0, display:'inline-block' }}/>
+                  録音を再開
+                </button>
+                <button
+                  onClick={generateMinutes}
+                  style={{ display:'flex', alignItems:'center', gap:8, background:'#1a56db', border:'none', borderRadius:14, padding:'14px 26px', fontSize:15, fontWeight:600, color:'#fff', cursor:'pointer', fontFamily:'inherit', flexShrink:0 }}
+                >
+                  議事録を生成
+                </button>
+              </div>
+            </div>
+          )}
+
           {phase === 'uploading' && (
             <div style={{ padding:'40px 20px', display:'flex', flexDirection:'column', alignItems:'center', gap:18 }}>
               <div style={{ width:38, height:38, borderRadius:'50%', border:'2.5px solid #e5e7eb', borderTopColor:'#1a56db', animation:'spin .7s linear infinite' }}/>
@@ -1923,8 +2009,8 @@ export default function App() {
 
       </main>
 
-      {/* ── Fixed bottom recording bar (recording only) ── */}
-      {phase === 'recording' && (
+      {/* ── Fixed bottom bar (recording / stopped) ── */}
+      {(phase === 'recording' || phase === 'stopped') && (
         <div ref={recordingBarRef} style={{
           position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 30,
           background: 'rgba(255,255,255,0.96)',
@@ -1935,18 +2021,36 @@ export default function App() {
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14,
         }}>
           <span style={{
-            fontSize: 15, fontWeight: 500, color: '#0f172a',
+            fontSize: 15, fontWeight: 500, color: phase === 'stopped' ? '#94a3b8' : '#0f172a',
             fontVariantNumeric: 'tabular-nums', minWidth: 52, textAlign: 'center', letterSpacing: '-0.02em',
           }}>
             {fmtSec(recSec)}
           </span>
-          <button
-            onClick={stopRec}
-            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 20px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, border: '1.5px solid #e2e8f0', background: '#fff', color: '#475569' }}
-          >
-            <span style={{ width: 11, height: 11, borderRadius: 2, background: '#94a3b8', display: 'inline-block', flexShrink: 0 }}/>
-            録音を停止する
-          </button>
+          {phase === 'recording' ? (
+            <button
+              onClick={stopRec}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 20px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, border: '1.5px solid #e2e8f0', background: '#fff', color: '#475569' }}
+            >
+              <span style={{ width: 11, height: 11, borderRadius: 2, background: '#94a3b8', display: 'inline-block', flexShrink: 0 }}/>
+              録音を停止する
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={resumeRec}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, border: '1.5px solid #bbf7d0', background: '#f0fdf4', color: '#16a34a' }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#16a34a', display: 'inline-block', flexShrink: 0 }}/>
+                録音を再開
+              </button>
+              <button
+                onClick={generateMinutes}
+                style={{ padding: '8px 18px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600, border: 'none', background: '#1a56db', color: '#fff' }}
+              >
+                議事録を生成
+              </button>
+            </>
+          )}
         </div>
       )}
 
