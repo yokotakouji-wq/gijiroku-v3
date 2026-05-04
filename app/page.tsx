@@ -1482,6 +1482,10 @@ export default function App() {
         ::-webkit-scrollbar-thumb{background:#ddd;border-radius:2px}
         .idle-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:18px}
         @media(max-width:660px){.idle-grid{grid-template-columns:1fr}}
+        .date-row-wrap{container-type:inline-size}
+        .date-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end;margin-bottom:14px}
+        .date-sep{font-size:16px;color:#d1d5db;padding-bottom:8px;text-align:center}
+        @container(max-width:400px){.date-row{grid-template-columns:1fr;gap:6px}.date-sep{display:none}}
       `}</style>
 
       {/* ── Header ── */}
@@ -2022,11 +2026,12 @@ function MeetingInfoCard({ info, setField, phase }: { info: Info; setField: (k: 
           <InfoField label="会議名">
             <input style={inputStyle} value={info.name} onChange={setField('name')} placeholder={PH}/>
           </InfoField>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:8, alignItems:'end', marginBottom:14 }}>
+          <div className="date-row-wrap">
+          <div className="date-row">
             <InfoField label="開始">
               <input type="datetime-local" style={inputStyle} value={info.dateStart} onChange={setField('dateStart')}/>
             </InfoField>
-            <span style={{ fontSize:16, color:'#d1d5db', paddingBottom:8, textAlign:'center' }}>〜</span>
+            <span className="date-sep">〜</span>
             <InfoField label="終了">
               <div style={{ position: 'relative' }}>
                 <input
@@ -2037,15 +2042,19 @@ function MeetingInfoCard({ info, setField, phase }: { info: Info; setField: (k: 
                 />
                 {!info.dateEnd && (
                   <span style={{
-                    position: 'absolute', inset: 0, padding: '8px 11px',
-                    fontSize: 13, color: '#b0bec5', pointerEvents: 'none',
-                    display: 'flex', alignItems: 'center',
+                    position: 'absolute', top: 0, bottom: 0, left: 0, right: 44,
+                    padding: '8px 11px', fontSize: 12, color: '#b0bec5',
+                    pointerEvents: 'none', display: 'flex', alignItems: 'center',
+                    overflow: 'hidden', whiteSpace: 'nowrap',
                   }}>
-                    停止後に自動入力
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      停止後入力
+                    </span>
                   </span>
                 )}
               </div>
             </InfoField>
+          </div>
           </div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
             <InfoField label="開催場所"><input style={inputStyle} value={info.place} onChange={setField('place')} placeholder={PH}/></InfoField>
