@@ -91,7 +91,7 @@ const MOCK_TEXTS = [
   '次回会議は2週間後の同じ時間で調整します。議題は進捗確認と新機能のデモです。',
 ]
 
-const PH = '（録音から自動入力されます）'
+const PH = '録音後に自動入力'
 const pad = (n: number) => String(n).padStart(2, '0')
 const fmtLocal = (d: Date) =>
   `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
