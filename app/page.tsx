@@ -1677,6 +1677,48 @@ export default function App() {
         </Card>
         )}
 
+        {/* ── DEV: 確認候補プレビュー テスト用ブロック追加 ── */}
+        {isMockAvailable && phase === 'idle' && (
+          <div style={{ marginTop: 12, padding: '10px 14px', background: '#faf5ff', border: '1px dashed #d8b4fe', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 11, color: '#7c3aed', fontWeight: 600, flexShrink: 0 }}>DEV</span>
+            <span style={{ fontSize: 11, color: '#6b21a8', flex: 1 }}>確認候補プレビューのテスト用ブロックを追加します（開発環境のみ表示）</span>
+            <button
+              onClick={() => {
+                const ts = Date.now()
+                setLiveBlocks([
+                  {
+                    id: `blk-dev-${ts}-1`,
+                    start: 0, end: 180, sec: 180,
+                    orig: '本日2026年5月5日13時30分から第3回定例会議を開始します。出席者は営業部から3人、開発部から5人の計8人です。前回4月15日の議事録を確認し、承認されました。今期の売上目標は500万円で、現在の達成率は62%です。残り2ヶ月で残りの190万円を積み上げる必要があります。',
+                    text: '本日2026年5月5日13時30分から第3回定例会議を開始します。出席者は営業部から3人、開発部から5人の計8人です。前回4月15日の議事録を確認し、承認されました。今期の売上目標は500万円で、現在の達成率は62%です。残り2ヶ月で残りの190万円を積み上げる必要があります。',
+                    status: 'formatted',
+                    include: true, important: false, memo: '',
+                  },
+                  {
+                    id: `blk-dev-${ts}-2`,
+                    start: 180, end: 360, sec: 180,
+                    orig: '次のアジェンダはキャンペーン予算の追加申請についてです。マーケティング部から30万円の追加要望が出ており、今月末までに稟議を通す必要があります。実施期間は6月1日から6月30日の1ヶ月間、対象ユーザーは約1,200人を見込んでいます。前回のキャンペーン時は2回に分けて施策を打ち、獲得件数は合計47件でした。今回は1回にまとめてコストを抑える方針です。',
+                    text: '次のアジェンダはキャンペーン予算の追加申請についてです。マーケティング部から30万円の追加要望が出ており、今月末までに稟議を通す必要があります。実施期間は6月1日から6月30日の1ヶ月間、対象ユーザーは約1,200人を見込んでいます。前回のキャンペーン時は2回に分けて施策を打ち、獲得件数は合計47件でした。今回は1回にまとめてコストを抑える方針です。',
+                    status: 'confirmed',
+                    include: true, important: false, memo: '',
+                  },
+                  {
+                    id: `blk-dev-${ts}-3`,
+                    start: 360, end: 540, sec: 180,
+                    orig: '次回会議は令和8年6月3日14時から第4会議室で実施します。所要時間は90分を予定しています。議題は進捗報告と新機能のデモです。参加者は今回と同じ8人プラス外部ベンダー2人の10人構成になります。資料は5月31日までに共有フォルダへ提出してください。費用精算は1件あたり3千円の上限で処理をお願いします。',
+                    text: '次回会議は令和8年6月3日14時から第4会議室で実施します。所要時間は90分を予定しています。議題は進捗報告と新機能のデモです。参加者は今回と同じ8人プラス外部ベンダー2人の10人構成になります。資料は5月31日までに共有フォルダへ提出してください。費用精算は1件あたり3千円の上限で処理をお願いします。',
+                    status: 'formatted',
+                    include: true, important: true, memo: '',
+                  },
+                ])
+              }}
+              style={{ fontSize: 11, padding: '5px 12px', borderRadius: 7, border: '1px solid #d8b4fe', background: '#fff', color: '#7c3aed', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+            >
+              テスト用ブロックを追加
+            </button>
+          </div>
+        )}
+
         {/* ── Meeting Info Card (non-idle) ── */}
         {phase !== 'idle' && <div style={{ marginTop:8 }}><MeetingInfoCard info={info} setField={setField} phase={phase} /></div>}
 
@@ -2110,6 +2152,55 @@ function Btn({ children, onClick, accent }: { children: React.ReactNode; onClick
   )
 }
 
+// ── Candidate highlight (read-only preview) ──────────────────────────────────
+const CANDIDATE_REGEX = /[令平昭大明][和成和正治]\d+年|\d{4}年|\d{1,2}月\d{1,2}日|\d{1,2}月|\d{1,2}\/\d{1,2}|\d{1,2}:\d{2}|\d{1,2}時|\d+分|\d+人|\d+(?:万|千)?円|\d+回|\d+(?:\.\d+)?%|\d+件|\d+(?:週間?|日間|秒)/g
+
+interface TextSegment { text: string; isCandidate: boolean }
+
+function parseHighlightSegments(text: string): TextSegment[] {
+  const segs: TextSegment[] = []
+  let last = 0
+  const re = new RegExp(CANDIDATE_REGEX.source, 'g')
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) segs.push({ text: text.slice(last, m.index), isCandidate: false })
+    segs.push({ text: m[0], isCandidate: true })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) segs.push({ text: text.slice(last), isCandidate: false })
+  return segs
+}
+
+const CANDIDATE_CHIP_MAX = 10
+
+function CandidatePreview({ text }: { text: string }) {
+  if (!text.trim()) return null
+  const segs = parseHighlightSegments(text)
+  const unique = [...new Set(segs.filter(s => s.isCandidate).map(s => s.text))]
+  if (unique.length === 0) return null
+  const shown = unique.slice(0, CANDIDATE_CHIP_MAX)
+  const rest  = unique.length - CANDIDATE_CHIP_MAX
+  return (
+    <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+      <span style={{ fontSize: 10.5, color: '#94a3b8', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        確認候補：日付・時間・人数・金額などを確認してください
+      </span>
+      {shown.map((word, i) => (
+        <span key={i} style={{
+          fontSize: 10.5, color: '#64748b',
+          background: '#f1f5f9', border: '0.5px solid #e2e8f0',
+          borderRadius: 4, padding: '1px 6px', whiteSpace: 'nowrap',
+        }}>
+          {word}
+        </span>
+      ))}
+      {rest > 0 && (
+        <span style={{ fontSize: 10.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>ほか{rest}件</span>
+      )}
+    </div>
+  )
+}
+
 // ── LiveBlockCard ───────────────────────────────────────────────────────────
 interface LiveBlockCardProps {
   block: Block
@@ -2220,6 +2311,7 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
               lineHeight: 1.8,
             }}
           />
+          <CandidatePreview text={block.text} />
         </>
       )}
 
