@@ -1663,7 +1663,7 @@ export default function App() {
                 </div>
                 <div style={{ display:'inline-flex', alignItems:'center', gap:6, background:'#ecfeff', border:'1px solid #cffafe', borderRadius:999, padding:'5px 13px 5px 10px', fontSize:12, fontWeight:500, color:'#0e7490' }}>
                   <span style={{ width:7, height:7, borderRadius:'50%', background:'#0891b2', flexShrink:0, display:'inline-block', animation:'pulse 1.6s ease-in-out infinite' }}/>
-                  {(isMockAvailable && mockMode) ? 'モック（DEV）' : wsConnected ? 'ライブ文字起こし中' : wsError ? 'Deepgram 接続失敗' : '接続中…'}
+                  {(isMockAvailable && mockMode) ? 'モック（DEV）' : wsConnected ? 'ライブ文字起こし中' : wsError ? 'ライブ文字起こし未接続' : '接続中…'}
                 </div>
               </div>
               {/* 右: 停止ボタン */}
@@ -1882,33 +1882,15 @@ export default function App() {
                       ✂ 今すぐ区切る
                     </button>
                   </div>
-                  <div style={{ width: 1, height: 30, background: '#e2e8f0', flexShrink: 0 }}/>
-                  {/* 接続状態 */}
-                  <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 24 }}>
-                    <div style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                      borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500,
-                      background: (isMockAvailable && mockMode) ? '#f5f0ff' : wsConnected ? '#f0fdf4' : wsError ? '#fef2f2' : '#f8fafc',
-                      border: `1px solid ${(isMockAvailable && mockMode) ? '#d8b4fe' : wsConnected ? '#bbf7d0' : wsError ? '#fecaca' : '#e2e8f0'}`,
-                      color: (isMockAvailable && mockMode) ? '#9b59b6' : wsConnected ? '#15803d' : wsError ? '#b91c1c' : '#94a3b8',
-                    }}>
-                      {wsConnected && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                      {(isMockAvailable && mockMode) ? 'モック（DEV）' : wsConnected ? 'Deepgram 接続中' : wsError ? 'Deepgram 接続失敗' : '接続中…'}
-                    </div>
-                  </div>
                 </div>
               </div>
             )}
 
-            {/* バナー + ナビゲーション — ブロックがある間は常に表示 */}
-            <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 16, padding: '12px 20px', marginTop: phase === 'recording' ? 8 : 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                {/* 確認用テキストバナー */}
-                <div style={{ padding: '5px 12px', borderRadius: 8, background: '#f0f9ff', border: '1px solid #bae6fd', fontSize: 11.5, color: '#0369a1' }}>
-                  AI整文済みのテキストです。修正後「確認OK」を押してください
-                </div>
-                {/* ナビゲーション */}
-                {liveBlocks.length > 0 && (
+            {/* ナビゲーション — 録音中はライブ文字起こしへの集中を優先 */}
+            {phase !== 'recording' && liveBlocks.length > 0 && (
+              <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 16, padding: '12px 20px', marginTop: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                  {/* ナビゲーション */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 11.5, color: '#6b7280', whiteSpace: 'nowrap' }}>
                       <span style={{ color: '#16a34a', fontWeight: 600 }}>✓ {confirmed}</span>{' '}確認済
@@ -1932,14 +1914,14 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Deepgram接続エラー — 録音中のみ */}
             {phase === 'recording' && wsError && !(isMockAvailable && mockMode) && (
               <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '8px 16px', marginTop: 8, fontSize: 12, color: '#b91c1c' }}>
-                {wsError}
+                ライブ文字起こしに接続できません。録音は継続できます。
               </div>
             )}
 
@@ -2281,40 +2263,47 @@ function Btn({ children, onClick, accent }: { children: React.ReactNode; onClick
   )
 }
 
-// ── Candidate highlight (read-only preview) ──────────────────────────────────
-const CANDIDATE_REGEX = /[令平昭大明][和成和正治]\d+年|\d{4}年|\d{1,2}月\d{1,2}日|\d{1,2}月|\d{1,2}\/\d{1,2}|\d{1,2}:\d{2}|\d{1,2}時|\d+分|\d+人|\d+(?:万|千)?円|\d+回|\d+(?:\.\d+)?%|\d+件|\d+(?:週間?|日間|秒)/g
+// ── Candidate chips (read-only preview) ──────────────────────────────────────
+const KANJI_NUMERAL = '一二三四五六七八九十百千万億兆〇零'
+const CANDIDATE_PATTERNS = [
+  new RegExp(`(?:令和|平成|昭和|大正|明治)[0-9０-９${KANJI_NUMERAL}]+年`, 'gu'),
+  new RegExp(`[0-9０-９]{4}年`, 'gu'),
+  new RegExp(`[0-9０-９]{1,2}月[0-9０-９]{1,2}日|[${KANJI_NUMERAL}]+月[${KANJI_NUMERAL}]+日`, 'gu'),
+  new RegExp(`[0-9０-９]{1,2}/[0-9０-９]{1,2}|[0-9０-９]{1,2}:[0-9０-９]{2}`, 'gu'),
+  new RegExp(`[0-9０-９,，]+(?:\\.[0-9０-９]+)?(?:万|千)?(?:人|円|回|%|％|件|週間?|日間|秒|分|時|月)`, 'gu'),
+  new RegExp(`[${KANJI_NUMERAL}]+(?:万人|千円|万円|億円|人|円|回|件|週間?|日間|秒|分|時|月|年|日)`, 'gu'),
+  /[\p{Script=Han}々]{2,4}(?:さん|氏|様)/gu,
+]
 
-interface TextSegment { text: string; isCandidate: boolean }
-
-function parseHighlightSegments(text: string): TextSegment[] {
-  const segs: TextSegment[] = []
-  let last = 0
-  const re = new RegExp(CANDIDATE_REGEX.source, 'g')
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) segs.push({ text: text.slice(last, m.index), isCandidate: false })
-    segs.push({ text: m[0], isCandidate: true })
-    last = m.index + m[0].length
+function extractCandidates(text: string): string[] {
+  const found: { word: string; index: number }[] = []
+  for (const pattern of CANDIDATE_PATTERNS) {
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(text)) !== null) {
+      found.push({ word: match[0], index: match.index })
+    }
   }
-  if (last < text.length) segs.push({ text: text.slice(last), isCandidate: false })
-  return segs
+
+  const seen = new Set<string>()
+  return found
+    .sort((a, b) => a.index - b.index)
+    .filter(({ word }) => {
+      if (seen.has(word)) return false
+      seen.add(word)
+      return true
+    })
+    .map(({ word }) => word)
 }
 
-const CANDIDATE_CHIP_MAX = 10
-
-function CandidatePreview({ text }: { text: string }) {
-  if (!text.trim()) return null
-  const segs = parseHighlightSegments(text)
-  const unique = [...new Set(segs.filter(s => s.isCandidate).map(s => s.text))]
-  if (unique.length === 0) return null
-  const shown = unique.slice(0, CANDIDATE_CHIP_MAX)
-  const rest  = unique.length - CANDIDATE_CHIP_MAX
+function CandidatePreview({ candidates }: { candidates: string[] }) {
+  if (candidates.length === 0) return null
   return (
     <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
       <span style={{ fontSize: 10.5, color: '#94a3b8', whiteSpace: 'nowrap', flexShrink: 0 }}>
-        確認候補：日付・時間・人数・金額などを確認してください
+        確認候補：
       </span>
-      {shown.map((word, i) => (
+      {candidates.map((word, i) => (
         <span key={i} style={{
           fontSize: 10.5, color: '#64748b',
           background: '#f1f5f9', border: '0.5px solid #e2e8f0',
@@ -2323,9 +2312,6 @@ function CandidatePreview({ text }: { text: string }) {
           {word}
         </span>
       ))}
-      {rest > 0 && (
-        <span style={{ fontSize: 10.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>ほか{rest}件</span>
-      )}
     </div>
   )
 }
@@ -2372,6 +2358,7 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
     : '#e8e8e8'
 
   const isExcluded = block.status === 'excluded'
+  const confirmationCandidates = extractCandidates(block.text)
 
   return (
     <div
@@ -2440,7 +2427,7 @@ function LiveBlockCard({ block, isActive, memoOpen, onUpdate, onToggleMemo, onRe
               lineHeight: 1.8,
             }}
           />
-          <CandidatePreview text={block.text} />
+          <CandidatePreview candidates={confirmationCandidates} />
         </>
       )}
 
