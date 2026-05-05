@@ -1140,9 +1140,46 @@ export default function App() {
   const toConfirm     = liveBlocks.filter(b => b.status === 'formatted' || b.status === 'format_failed').length
   const confirmed     = liveBlocks.filter(b => b.status === 'confirmed').length
   const anyFormatting = liveBlocks.some(b => b.status === 'formatting')
+  const cleanedTranscriptBlocks = liveBlocks.filter(
+    b => b.include && (b.status === 'formatted' || b.status === 'confirmed') && b.text.trim()
+  )
 
   function updateBlock(id: string, u: Partial<Block>) {
     setLiveBlocks(prev => prev.map(b => b.id === id ? { ...b, ...u } : b))
+  }
+
+  function buildCleanedTranscriptText(blocks: Block[]): string {
+    const metaLines: string[] = []
+    if (info.name.trim()) metaLines.push(`会議名：${info.name.trim()}`)
+    if (info.dateStart || info.dateEnd) {
+      const dateText = `${fmtDT(info.dateStart)}${info.dateEnd ? ` 〜 ${fmtT(info.dateEnd)}` : ''}`
+      metaLines.push(`日時：${dateText}`)
+    }
+    if (info.att.trim()) metaLines.push(`参加者：${info.att.trim()}`)
+    if (info.facil.trim()) metaLines.push(`司会者：${info.facil.trim()}`)
+    if (info.sec.trim()) metaLines.push(`書記：${info.sec.trim()}`)
+
+    const body = [...blocks]
+      .sort((a, b) => a.start - b.start)
+      .map(b => `[${fmtSec(b.start)}〜${fmtSec(b.end)}]\n${b.text.trim()}`)
+      .join('\n\n')
+
+    return [...metaLines, body].filter(Boolean).join('\n\n')
+  }
+
+  function saveCleanedTranscript() {
+    if (cleanedTranscriptBlocks.length === 0) return
+    const now = new Date()
+    const stamp =
+      `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-` +
+      `${pad(now.getHours())}${pad(now.getMinutes())}`
+    const blob = new Blob([buildCleanedTranscriptText(cleanedTranscriptBlocks)], { type: 'text/plain;charset=utf-8' })
+    const objUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = objUrl
+    a.download = `gijiroku-cleaned-transcript-${stamp}.txt`
+    a.click()
+    URL.revokeObjectURL(objUrl)
   }
 
   function toLatest() {
@@ -2031,6 +2068,19 @@ export default function App() {
               >
                 議事録を生成
               </button>
+              {cleanedTranscriptBlocks.length > 0 && (
+                <div style={{ position: 'absolute', right: 24, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                    NotebookLMや別AIで再利用できます
+                  </span>
+                  <button
+                    onClick={saveCleanedTranscript}
+                    style={{ padding: '7px 14px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, border: '1px solid #d1d5db', background: '#f8fafc', color: '#475569', whiteSpace: 'nowrap' }}
+                  >
+                    AI整文済み全文を保存
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
